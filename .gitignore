@@ -78,3 +78,11 @@ secrets*.toml
 history.jsonl
 session.json
 /omarchy/.qmlls.ini
+# Qt WebEngine profiles, caches and cookies if XDG dirs point into the tree,
+# plus local config copies and dev-run logs/screenshots.
+QtWebEngine/
+Cookies
+Cookies-journal
+/omarchy/config.toml
+/omarchy/*.log
+/omarchy/nohup.out

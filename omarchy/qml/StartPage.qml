@@ -84,7 +84,7 @@ Rectangle {
 
         Text {
             Layout.alignment: Qt.AlignHCenter
-            text: "ctrl+l address · ctrl+k tabs · ctrl+t new · ctrl+shift+n private · ctrl+f find · ctrl+shift+b compact"
+            text: "ctrl+l address · ctrl+k tabs · ctrl+t new · ctrl+shift+n private · ctrl+f find · ctrl+shift+b sidebar · left edge: tabs"
             color: page.pal.muted
             font.family: page.pal.font
             font.pixelSize: page.pal.fontSize - 1

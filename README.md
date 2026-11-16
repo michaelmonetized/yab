@@ -5,7 +5,7 @@ This fork rewrites Yab's desktop browser for Linux and [Omarchy](https://omarchy
 core, Qt Quick chrome and Qt WebEngine pages, coloured live by the active
 Omarchy theme.
 
-![Omaweb in Omarchy's Tokyo Night theme](omarchy/docs/start.png)
+![Omaweb in Omarchy's Tokyo Night theme: frameless, no toolbar, the tab sidebar revealed from the left edge](omarchy/docs/page.png)
 
 - Build, keys, Omarchy integration and why this stack: [omarchy/README.md](omarchy/README.md)
 - Quick start on Omarchy: `sudo pacman -S --needed rust qt6-base qt6-declarative qt6-webengine qt6-wayland && cd omarchy && make install && omaweb`

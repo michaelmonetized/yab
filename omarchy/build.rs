@@ -5,6 +5,7 @@ fn main() {
         "qml/Main.qml",
         "qml/BrowserTab.qml",
         "qml/TabStrip.qml",
+        "qml/Sidebar.qml",
         "qml/Omnibox.qml",
         "qml/FindBar.qml",
         "qml/StartPage.qml",
