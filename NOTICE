@@ -14,3 +14,8 @@ Apache License (see THIRD_PARTY_NOTICES.md).
 "Yab", "Yet Another Browser", the Yab logo and app icons are trademarks of
 Serafim Korablev and are not licensed under the Apache License; see
 TRADEMARKS.md.
+
+Omaweb (the omarchy/ directory of this fork) is a Linux rewrite of Yab's
+desktop browser in Rust and Qt Quick, by Michael Hurley, 2026, under the
+Apache License, Version 2.0. It is not Yab and is not endorsed by its
+author; it uses none of Yab's names, logos or icons.
