@@ -51,3 +51,30 @@ Phone/Reference/prototype.html
 
 # Completion signal remains readable after runner metadata is archived.
 /codex-done
+
+# Omaweb (omarchy/): Rust build output, editor and tool caches.
+/target/
+/omarchy/target/
+**/*.rs.bk
+.cache/
+.direnv/
+.vscode/
+.idea/
+
+# Never commit credentials or local secrets.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+credentials*.json
+secrets*.toml
+.netrc
+
+# Omaweb app state if a dev run points XDG dirs into the tree.
+/omarchy/.state/
+*.sock
+history.jsonl
+session.json
+/omarchy/.qmlls.ini

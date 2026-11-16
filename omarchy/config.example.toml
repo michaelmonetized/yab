@@ -1,0 +1,25 @@
+# ~/.config/omaweb/config.toml. Every key is optional.
+
+# Page for a fresh window with nothing to restore. Empty = start page.
+homepage = ""
+
+# Search for anything that isn't an address. {} is the query.
+search = "https://duckduckgo.com/?q={}"
+
+# "top" or "left" (vertical tabs, like Yab's sidebar).
+tabs = "top"
+
+# Bring last session's tabs back (private tabs never are).
+restore_session = true
+
+# Start with the tab strip and toolbar hidden; Ctrl+Shift+B toggles,
+# Ctrl+L shows the address field on its own.
+compact = false
+
+# Default zoom, 1.0 = 100 %.
+zoom = 1.0
+
+# Keyword searches, on top of the built-ins (g, ddg, gh, yt, w, aw, aur,
+# pkg, crates, hypr). Type "rs serde" to search docs.rs.
+[keywords]
+rs = "https://docs.rs/releases/search?query={}"

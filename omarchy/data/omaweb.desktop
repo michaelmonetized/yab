@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Omaweb
+GenericName=Web Browser
+Comment=Keyboard-first, Omarchy-themed web browser
+Exec=omaweb %U
+Icon=omaweb
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=omaweb
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New window
+Exec=omaweb --new
