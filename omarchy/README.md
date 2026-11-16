@@ -6,11 +6,17 @@ everywhere, live.
 
 Omaweb is a Linux rewrite of [Yab](https://github.com/yetanotherbrowser/yab)
 ("yet another browser", a native macOS browser by Serafim Korablev). It keeps
-Yab's idea, nothing in the way: one row of tabs, one field for addresses and
-searches, and the page. It does not reuse Yab's Swift code, names or icons.
+Yab's look and idea, nothing in the way: no frame, no title bar, no
+toolbar, just the page, edge to edge. Tabs live in a Yab-style sidebar
+(back / forward / reload, the address as a quiet pill, New tab, the tab
+list) that slides in when the pointer touches the left edge of the window
+and hides again when it leaves, or stays pinned beside the page. Addresses
+and searches go through one field that appears on demand as a palette
+(Ctrl+L, Ctrl+T) and is gone again once you press Return. It does not reuse
+Yab's Swift code, names or icons.
 
-![Omaweb on the start page, Tokyo Night](docs/start.png)
-![Omaweb with a page open](docs/page.png)
+![Omaweb with the sidebar revealed over a page, Tokyo Night](docs/page.png)
+![A new tab: the start page with the address palette open](docs/start.png)
 
 ## Why this stack
 
@@ -40,15 +46,16 @@ searches, and the page. It does not reuse Yab's Swift code, names or icons.
   `~/.local/state/omarchy/current/theme` (Omarchy 4) or
   `~/.config/omarchy/current/theme` (Omarchy 3), falling back to the
   theme's `alacritty.toml`, and fills missing keys with the same rules
-  `omarchy-theme-color` uses. `omarchy theme set <name>` re-colours tabs,
-  toolbar, menus, start page and the page background as it happens
+  `omarchy-theme-color` uses. `omarchy theme set <name>` re-colours the
+  sidebar, palette, menus, start page and the page background as it happens
   (inotify on the `current` dirs, plus a 3 s poll as a safety net). Light
   or dark mode goes to Qt's colour-scheme hint and from there to the web's
   `prefers-color-scheme`; open pages pick it up on reload.
 - **The Omarchy font.** The fontconfig monospace family that
   `omarchy-font-set` writes, else your Alacritty or Ghostty font.
-- **Hyprland-native.** Wayland first, app_id `omaweb`, no client-side
-  decorations, no shadows or margins, so it tiles edge to edge. Super stays
+- **Hyprland-native.** Wayland first, app_id `omaweb`, a frameless
+  window with no client-side decorations, title bar, shadows or margins,
+  so it tiles edge to edge and Hyprland's border is the only frame. Super stays
   Hyprland's: every Omaweb shortcut uses Ctrl or Alt.
 - **One instance.** `omaweb <url>` from a terminal, a bind or `xdg-open`
   opens a tab in the running window (a Unix socket in `$XDG_RUNTIME_DIR`).
@@ -64,27 +71,40 @@ searches, and the page. It does not reuse Yab's Swift code, names or icons.
 
 ## What works
 
-- Tabs across the top, or down the left with `tabs = "left"`; middle-click
-  closes; links that ask for a new window open as tabs.
-- One field: addresses go, words search (DuckDuckGo unless you set
+- Chromeless by default: the page fills the window. The tab sidebar is
+  hidden until the pointer reaches the left edge (or Ctrl+Shift+B), hides
+  when the pointer leaves, and can be pinned open (`pin_sidebar = true`,
+  its top-left button, or Ctrl+Shift+B). Middle-click closes a tab; links
+  that ask for a new window open as tabs. `tabs = "top"` brings back the
+  classic tab strip and address bar.
+- Frameless on every platform (`frameless = false` to get the window
+  manager's title bar back). On X11 the sidebar's top row moves the
+  window (double-click maximises) and the window edges resize it; on
+  Hyprland the compositor does both.
+- One field, on demand: Ctrl+L or Ctrl+T opens it as a palette over the
+  page and Return or Esc puts it away. Addresses go, words search (DuckDuckGo unless you set
   `search`), keyword searches (`aw hyprland`, `aur yay`, `gh rune`,
   `crates serde`, `hypr ...`), completion from your history and open tabs.
   Nothing is sent until Return.
-- Back, forward, reload, stop, load progress in the accent colour.
+- Back, forward, reload and stop (keys, or the sidebar's buttons); load
+  progress as an accent hairline along the top of the page.
 - Find in page, zoom, full screen (page or window), view source, DevTools.
 - Private tabs on an off-the-record profile; never saved, never in history.
 - Session restore and reopen-closed-tab.
 - Permission prompts (camera, mic, location, notifications, screen share)
   and downloads to `~/Downloads`.
-- Compact mode: hide the chrome, Ctrl+L brings the field back.
+- `tabs = "top"` has a compact mode: Ctrl+Shift+B hides the strip and
+  toolbar, Ctrl+L brings the field back.
 
 ## Keys
 
 | Keys | Does |
 | --- | --- |
-| Ctrl+L, Alt+D, F6 | Address field |
-| Ctrl+K | Jump to an open tab |
-| Ctrl+T / Ctrl+Shift+N | New tab / new private tab |
+| Ctrl+L, Alt+D, F6 | Address palette (Esc closes it) |
+| Ctrl+K | Jump to an open tab (palette) |
+| Ctrl+T / Ctrl+Shift+N | New tab / new private tab (opens the palette) |
+| Ctrl+Shift+B | Show and pin / hide the tab sidebar (`tabs = "top"`: compact mode) |
+| Pointer at the left edge | Reveal the sidebar; it hides when the pointer leaves |
 | Ctrl+W | Close tab |
 | Ctrl+Shift+T | Reopen closed tab |
 | Ctrl+Tab, Ctrl+PgDown / Ctrl+Shift+Tab, Ctrl+PgUp | Next / previous tab |
@@ -95,14 +115,13 @@ searches, and the page. It does not reuse Yab's Swift code, names or icons.
 | Esc | Stop loading |
 | Ctrl+F, then Enter / Shift+Enter, Ctrl+G | Find, next, previous |
 | Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / reset |
-| Ctrl+Shift+B | Compact mode |
 | F11 | Full screen |
 | Ctrl+U | View source |
 | F12, Ctrl+Shift+I | DevTools |
 | Ctrl+Shift+C | Copy page address |
 | Ctrl+Q | Quit (session is saved) |
 
-In the address field, Up/Down or Ctrl+N/Ctrl+P pick a suggestion.
+In the address palette, Up/Down or Ctrl+N/Ctrl+P pick a suggestion.
 
 ## Build and run
 
@@ -134,7 +153,8 @@ set them yourself.
   stay in the upstream tree, untouched.
 - Bookmarks (history and the start page cover most of it for now) and a
   settings screen (edit `config.toml`).
-- Spaces, pinned tabs, tab folders.
+- Spaces, pinned favourites, tab folders (Yab's sidebar has them; Omaweb's
+  sidebar shows the tab list only).
 - Web extensions; Qt WebEngine has no Chrome extension support.
 - Packaging. Nothing is published to the AUR.
 

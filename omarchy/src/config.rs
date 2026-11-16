@@ -13,11 +13,18 @@ pub struct Config {
     pub homepage: String,
     /// Search URL; `{}` is replaced with the escaped query.
     pub search: String,
-    /// `"top"` or `"left"`.
+    /// `"sidebar"` (default: Yab-style tab sidebar, hidden until you reach
+    /// for it, no toolbar) or `"top"` (classic tab strip and address bar).
+    /// `"left"` is read as `"sidebar"`.
     pub tabs: String,
+    /// Keep the sidebar open instead of revealing it on demand.
+    pub pin_sidebar: bool,
+    /// No window frame or title bar.
+    pub frameless: bool,
     /// Bring back last session's tabs on launch.
     pub restore_session: bool,
-    /// Start with the toolbar hidden (toggle with Ctrl+Shift+B).
+    /// `tabs = "top"` only: start with the tab strip and toolbar hidden
+    /// (toggle with Ctrl+Shift+B).
     pub compact: bool,
     /// Keyword searches: `gh rune` searches GitHub for "rune".
     pub keywords: BTreeMap<String, String>,
@@ -45,7 +52,9 @@ impl Default for Config {
         Config {
             homepage: String::new(),
             search: "https://duckduckgo.com/?q={}".to_string(),
-            tabs: "top".to_string(),
+            tabs: "sidebar".to_string(),
+            pin_sidebar: false,
+            frameless: true,
             restore_session: true,
             compact: false,
             keywords,
@@ -65,8 +74,8 @@ impl Config {
                 let mut merged = Config::default().keywords;
                 merged.append(&mut c.keywords);
                 c.keywords = merged;
-                if c.tabs != "left" {
-                    c.tabs = "top".into();
+                if c.tabs != "top" {
+                    c.tabs = "sidebar".into();
                 }
                 if !(0.25..=5.0).contains(&c.zoom) {
                     c.zoom = 1.0;
@@ -91,10 +100,27 @@ mod tests {
         let p = dir.path().join("config.toml");
         fs::write(&p, "tabs = \"left\"\n[keywords]\nrs = \"https://docs.rs/{}\"\n").unwrap();
         let c = Config::load(&p);
-        assert_eq!(c.tabs, "left");
+        assert_eq!(c.tabs, "sidebar");
+        assert!(!c.pin_sidebar);
+        assert!(c.frameless);
         assert!(c.restore_session);
         assert_eq!(c.keywords["rs"], "https://docs.rs/{}");
         assert!(c.keywords.contains_key("gh"));
+    }
+
+    #[test]
+    fn default_is_chromeless() {
+        let c = Config::default();
+        assert_eq!(c.tabs, "sidebar");
+        assert!(c.frameless);
+        assert!(!c.pin_sidebar);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("config.toml");
+        fs::write(&p, "tabs = \"top\"\nframeless = false\npin_sidebar = true\n").unwrap();
+        let c = Config::load(&p);
+        assert_eq!(c.tabs, "top");
+        assert!(!c.frameless);
+        assert!(c.pin_sidebar);
     }
 
     #[test]

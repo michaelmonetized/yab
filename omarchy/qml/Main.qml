@@ -12,6 +12,7 @@ ApplicationWindow {
     height: 820
     visible: true
     color: pal.bg
+    flags: frameless ? (Qt.Window | Qt.FramelessWindowHint) : Qt.Window
     title: (currentTab && currentTab.title ? currentTab.title + " — " : "") + "Omaweb"
 
     // ---- Rust core -------------------------------------------------------
@@ -23,7 +24,12 @@ ApplicationWindow {
 
     readonly property var theme: browser.themeJson.length ? JSON.parse(browser.themeJson) : null
     readonly property var cfg: browser.configJson.length ? JSON.parse(browser.configJson) : ({})
-    readonly property bool tabsLeft: cfg.tabs === "left"
+    // Chromeless by default: tabs = "sidebar" unless the config says "top".
+    readonly property bool sidebarMode: cfg.tabs !== "top"
+    readonly property bool frameless: cfg.frameless !== false
+    readonly property bool xcb: Qt.platform.pluginName === "xcb"
+    property bool sidebarPinned: false
+    property bool sidebarPeek: false
     property bool compact: false
     property bool chromePeek: false
     readonly property bool chromeShown: !compact || chromePeek
@@ -181,8 +187,13 @@ ApplicationWindow {
     }
 
     function focusOmnibox(tabsOnly) {
+        if (sidebarMode) { palette.open(tabsOnly); return }
         chromePeek = compact
         omnibox.focusField(tabsOnly)
+    }
+    function reloadOrStop() {
+        if (!currentTab) return
+        if (currentTab.loading) currentTab.view.stop(); else currentTab.view.reload()
     }
 
     Timer { id: saveTimer; interval: 800; onTriggered: win.saveNow() }
@@ -206,6 +217,7 @@ ApplicationWindow {
         privateProfile = privateProto.instance()
         browser.start()
         compact = !!cfg.compact
+        sidebarPinned = !!cfg.pin_sidebar
         const init = JSON.parse(browser.initialJson)
         for (const t of init.tabs) openTab(t.url, false, !!t.private)
         select(Math.min(init.current, tabs.length - 1))
@@ -238,14 +250,14 @@ ApplicationWindow {
     Shortcut { sequences: ["Alt+Right", "Forward"]; context: Qt.ApplicationShortcut; onActivated: if (win.currentTab) win.currentTab.view.goForward() }
     Shortcut { sequences: ["Ctrl+R", "F5"]; context: Qt.ApplicationShortcut; onActivated: if (win.currentTab) win.currentTab.view.reload() }
     Shortcut { sequences: ["Ctrl+Shift+R", "Shift+F5"]; context: Qt.ApplicationShortcut; onActivated: if (win.currentTab) win.currentTab.view.reloadAndBypassCache() }
-    Shortcut { sequences: ["Escape"]; enabled: win.currentTab !== null && win.currentTab.loading; onActivated: win.currentTab.view.stop() }
+    Shortcut { sequences: ["Escape"]; enabled: win.currentTab !== null && win.currentTab.loading && !palette.visible; onActivated: win.currentTab.view.stop() }
     Shortcut { sequences: ["Ctrl+F"]; context: Qt.ApplicationShortcut; onActivated: findBar.open() }
     Shortcut { sequences: ["Ctrl+G", "F3"]; context: Qt.ApplicationShortcut; onActivated: findBar.next(false) }
     Shortcut { sequences: ["Ctrl+Shift+G", "Shift+F3"]; context: Qt.ApplicationShortcut; onActivated: findBar.next(true) }
     Shortcut { sequences: ["Ctrl+=", "Ctrl++"]; context: Qt.ApplicationShortcut; onActivated: if (win.currentTab) win.currentTab.zoomBy(0.1) }
     Shortcut { sequences: ["Ctrl+-"]; context: Qt.ApplicationShortcut; onActivated: if (win.currentTab) win.currentTab.zoomBy(-0.1) }
     Shortcut { sequences: ["Ctrl+0"]; context: Qt.ApplicationShortcut; onActivated: if (win.currentTab) win.currentTab.zoom = (win.cfg.zoom || 1.0) }
-    Shortcut { sequences: ["Ctrl+Shift+B"]; context: Qt.ApplicationShortcut; onActivated: win.compact = !win.compact }
+    Shortcut { sequences: ["Ctrl+Shift+B"]; context: Qt.ApplicationShortcut; onActivated: win.toggleSidebar() }
     Shortcut { sequences: ["F11"]; context: Qt.ApplicationShortcut; onActivated: win.visibility === Window.FullScreen ? win.showNormal() : win.showFullScreen() }
     Shortcut { sequences: ["Ctrl+U"]; context: Qt.ApplicationShortcut; onActivated: if (win.currentTab) win.openTab("view-source:" + win.currentTab.url, true, win.currentTab.isPrivate, win.current + 1) }
     Shortcut { sequences: ["F12", "Ctrl+Shift+I"]; context: Qt.ApplicationShortcut; onActivated: if (win.currentTab) win.currentTab.toggleDevTools() }
@@ -254,169 +266,341 @@ ApplicationWindow {
     TextEdit { id: clip; visible: false }
 
     // ---- Layout ------------------------------------------------------------
-    RowLayout {
-        anchors.fill: parent
+    // Default (tabs = "sidebar"): no frame, no toolbar, the page edge to
+    // edge. The sidebar slides over the page from the left edge, or sits
+    // beside it when pinned; addresses go through the palette (Ctrl+L).
+    // tabs = "top" keeps the classic tab strip and address bar.
+    readonly property int sidebarWidth: 248
+    readonly property bool sidebarOpen: sidebarMode && fullscreenTab === null && (sidebarPinned || sidebarPeek)
+    readonly property bool resizable: frameless && visibility === Window.Windowed && fullscreenTab === null
+
+    function toggleSidebar() {
+        if (!sidebarMode) { compact = !compact; return }
+        if (sidebarPinned) { sidebarPinned = false; sidebarPeek = sidebar.hovered }
+        else { sidebarPinned = true; sidebarPeek = false }
+    }
+    function toggleMaximized() {
+        if (visibility === Window.Maximized) showNormal(); else showMaximized()
+    }
+
+    Timer {
+        id: peekTimer
+        interval: 350
+        onTriggered: if (!sidebar.hovered && !leftEdge.containsMouse && !palette.visible) win.sidebarPeek = false
+    }
+    Connections {
+        target: sidebar
+        function onHoveredChanged() { if (!sidebar.hovered) peekTimer.restart() }
+    }
+
+    // Classic chrome, tabs = "top" only.
+    ColumnLayout {
+        id: topChrome
+        visible: !win.sidebarMode && win.chromeShown && win.fullscreenTab === null
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? implicitHeight : 0
         spacing: 0
+        z: 10
 
         TabStrip {
-            id: sideTabs
-            visible: win.tabsLeft && win.chromeShown && win.fullscreenTab === null
-            vertical: true
+            vertical: false
             pal: pal
             tabs: win.tabs
             current: win.current
-            Layout.fillHeight: true
-            Layout.preferredWidth: 220
+            Layout.fillWidth: true
+            Layout.preferredHeight: 30
             onActivate: i => win.select(i)
             onCloseTab: i => win.closeTab(i)
             onNewTab: win.openTab("", true, false)
+            // Frameless: drag the strip's empty space to move the window.
+            DragHandler {
+                target: null
+                enabled: win.frameless
+                onActiveChanged: if (active) win.startSystemMove()
+            }
         }
+
         Rectangle {
-            visible: sideTabs.visible
-            Layout.fillHeight: true
-            Layout.preferredWidth: 1
-            color: pal.muted
-            opacity: 0.5
-        }
-
-        ColumnLayout {
+            id: toolbar
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 0
+            Layout.preferredHeight: 38
+            color: pal.bg
 
-            TabStrip {
-                visible: !win.tabsLeft && win.chromeShown && win.fullscreenTab === null
-                vertical: false
-                pal: pal
-                tabs: win.tabs
-                current: win.current
-                Layout.fillWidth: true
-                Layout.preferredHeight: 30
-                onActivate: i => win.select(i)
-                onCloseTab: i => win.closeTab(i)
-                onNewTab: win.openTab("", true, false)
-            }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 6
+                anchors.rightMargin: 6
+                spacing: 2
 
-            // Toolbar: back / forward / reload and the one field.
-            Rectangle {
-                id: toolbar
-                visible: win.chromeShown && win.fullscreenTab === null
-                Layout.fillWidth: true
-                Layout.preferredHeight: 38
-                color: pal.bg
-                z: 10
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 6
-                    anchors.rightMargin: 6
-                    spacing: 2
-
-                    NavButton { glyph: "\u2190"; tip: "Back (Alt+Left)"; enabled: win.currentTab && win.currentTab.canGoBack; onClicked: win.currentTab.view.goBack() }
-                    NavButton { glyph: "\u2192"; tip: "Forward (Alt+Right)"; enabled: win.currentTab && win.currentTab.canGoForward; onClicked: win.currentTab.view.goForward() }
-                    NavButton {
-                        glyph: win.currentTab && win.currentTab.loading ? "\u2715" : "\u21bb"
-                        tip: win.currentTab && win.currentTab.loading ? "Stop (Esc)" : "Reload (Ctrl+R)"
-                        enabled: win.currentTab !== null
-                        onClicked: win.currentTab.loading ? win.currentTab.view.stop() : win.currentTab.view.reload()
-                    }
-
-                    Omnibox {
-                        id: omnibox
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        Layout.topMargin: 4
-                        Layout.bottomMargin: 4
-                        pal: pal
-                        browser: browser
-                        tabs: win.tabs
-                        currentTab: win.currentTab
-                        onGo: text => win.go(text)
-                        onSwitchTo: i => win.select(i)
-                        onDismissed: { win.chromePeek = false; if (win.currentTab) win.currentTab.view.forceActiveFocus() }
-                    }
-
-                    Text {
-                        visible: win.currentTab && Math.abs(win.currentTab.zoom - 1.0) > 0.01
-                        text: win.currentTab ? Math.round(win.currentTab.zoom * 100) + "%" : ""
-                        color: pal.fgDark
-                        font.family: pal.font
-                        font.pixelSize: pal.fontSize - 1
-                        Layout.leftMargin: 6
-                    }
-                    Text {
-                        visible: win.currentTab && win.currentTab.isPrivate
-                        text: "private"
-                        color: pal.accent
-                        font.family: pal.font
-                        font.pixelSize: pal.fontSize - 1
-                        Layout.leftMargin: 6
-                    }
+                NavButton { glyph: "\u2190"; tip: "Back (Alt+Left)"; enabled: win.currentTab && win.currentTab.canGoBack; onClicked: win.currentTab.view.goBack() }
+                NavButton { glyph: "\u2192"; tip: "Forward (Alt+Right)"; enabled: win.currentTab && win.currentTab.canGoForward; onClicked: win.currentTab.view.goForward() }
+                NavButton {
+                    glyph: win.currentTab && win.currentTab.loading ? "\u2715" : "\u21bb"
+                    tip: win.currentTab && win.currentTab.loading ? "Stop (Esc)" : "Reload (Ctrl+R)"
+                    enabled: win.currentTab !== null
+                    onClicked: win.reloadOrStop()
                 }
 
-                // Load progress along the bottom edge, in the accent.
-                Rectangle {
-                    anchors.bottom: parent.bottom
-                    height: 2
-                    color: pal.accent
-                    width: win.currentTab && win.currentTab.loading ? parent.width * win.currentTab.progress / 100 : 0
-                    visible: width > 0
-                    Behavior on width { NumberAnimation { duration: 120 } }
-                }
-                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: pal.muted; opacity: 0.35 }
-            }
-
-            FindBar {
-                id: findBar
-                Layout.fillWidth: true
-                pal: pal
-                view: win.currentTab ? win.currentTab.view : null
-            }
-
-            Item {
-                id: viewArea
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-
-                StartPage {
-                    anchors.fill: parent
-                    visible: win.currentTab !== null && win.currentTab.blank
+                Omnibox {
+                    id: omnibox
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.topMargin: 4
+                    Layout.bottomMargin: 4
                     pal: pal
                     browser: browser
-                    isPrivate: win.currentTab !== null && win.currentTab.isPrivate
-                    onOpen: url => win.go(url)
-                    z: 5
+                    tabs: win.tabs
+                    currentTab: win.currentTab
+                    onGo: text => win.go(text)
+                    onSwitchTo: i => win.select(i)
+                    onDismissed: { win.chromePeek = false; if (win.currentTab) win.currentTab.view.forceActiveFocus() }
                 }
 
-                // Hover link / status line, bottom-left like every browser.
-                Rectangle {
-                    id: status
-                    z: 20
-                    property string message: ""
-                    readonly property string shown: message.length ? message : (win.currentTab ? win.currentTab.hoveredLink : "")
-                    function show(m) { message = m; statusTimer.restart() }
-                    visible: shown.length > 0
-                    anchors.left: parent.left
-                    anchors.bottom: parent.bottom
-                    width: Math.min(statusText.implicitWidth + 16, parent.width * 0.7)
-                    height: statusText.implicitHeight + 8
-                    color: pal.bgDark
-                    border.color: pal.muted
-                    border.width: 1
-                    Text {
-                        id: statusText
-                        anchors.centerIn: parent
-                        width: parent.width - 16
-                        elide: Text.ElideMiddle
-                        text: status.shown
-                        color: pal.fg
-                        font.family: pal.font
-                        font.pixelSize: pal.fontSize - 1
-                    }
-                    Timer { id: statusTimer; interval: 2500; onTriggered: status.message = "" }
+                Text {
+                    visible: win.currentTab && Math.abs(win.currentTab.zoom - 1.0) > 0.01
+                    text: win.currentTab ? Math.round(win.currentTab.zoom * 100) + "%" : ""
+                    color: pal.fgDark
+                    font.family: pal.font
+                    font.pixelSize: pal.fontSize - 1
+                    Layout.leftMargin: 6
+                }
+                Text {
+                    visible: win.currentTab && win.currentTab.isPrivate
+                    text: "private"
+                    color: pal.accent
+                    font.family: pal.font
+                    font.pixelSize: pal.fontSize - 1
+                    Layout.leftMargin: 6
                 }
             }
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: pal.muted; opacity: 0.35 }
+        }
+    }
+
+    // The page, edge to edge.
+    Item {
+        id: pageArea
+        anchors.top: topChrome.bottom
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        anchors.left: parent.left
+        anchors.leftMargin: win.sidebarMode && win.sidebarPinned && win.fullscreenTab === null ? win.sidebarWidth : 0
+        Behavior on anchors.leftMargin { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+        Item {
+            id: viewArea
+            anchors.fill: parent
+            clip: true
+
+            StartPage {
+                anchors.fill: parent
+                visible: win.currentTab !== null && win.currentTab.blank
+                pal: pal
+                browser: browser
+                isPrivate: win.currentTab !== null && win.currentTab.isPrivate
+                onOpen: url => win.go(url)
+                z: 5
+            }
+        }
+
+        // Load progress: a hairline in the accent along the top of the page.
+        Rectangle {
+            z: 15
+            anchors.top: parent.top
+            anchors.left: parent.left
+            height: 2
+            color: pal.accent
+            width: win.currentTab && win.currentTab.loading ? parent.width * win.currentTab.progress / 100 : 0
+            visible: width > 0
+            Behavior on width { NumberAnimation { duration: 120 } }
+        }
+
+        // Find floats over the page, top right.
+        FindBar {
+            id: findBar
+            z: 30
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 10
+            width: Math.min(460, parent.width - 20)
+            height: 38
+            radius: 8
+            border.color: pal.muted
+            border.width: 1
+            pal: pal
+            view: win.currentTab ? win.currentTab.view : null
+        }
+
+        // Private / zoom badge, top right, only in the chromeless layout.
+        Rectangle {
+            z: 25
+            visible: win.sidebarMode && !win.sidebarOpen && !findBar.visible && badge.text.length > 0
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 10
+            width: badge.implicitWidth + 16
+            height: badge.implicitHeight + 8
+            radius: 6
+            color: pal.bgDark
+            opacity: 0.9
+            Text {
+                id: badge
+                anchors.centerIn: parent
+                text: [
+                    win.currentTab && win.currentTab.isPrivate ? "private" : "",
+                    win.currentTab && Math.abs(win.currentTab.zoom - 1.0) > 0.01 ? Math.round(win.currentTab.zoom * 100) + "%" : ""
+                ].filter(s => s.length).join("  ")
+                color: pal.accent
+                font.family: pal.font
+                font.pixelSize: pal.fontSize - 1
+            }
+        }
+
+        // Hover link / status line, bottom-left like every browser.
+        Rectangle {
+            id: status
+            z: 20
+            property string message: ""
+            readonly property string shown: message.length ? message : (win.currentTab ? win.currentTab.hoveredLink : "")
+            function show(m) { message = m; statusTimer.restart() }
+            visible: shown.length > 0
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: win.sidebarPeek && !win.sidebarPinned ? win.sidebarWidth : 0
+            width: Math.min(statusText.implicitWidth + 16, parent.width * 0.7)
+            height: statusText.implicitHeight + 8
+            color: pal.bgDark
+            border.color: pal.muted
+            border.width: 1
+            Text {
+                id: statusText
+                anchors.centerIn: parent
+                width: parent.width - 16
+                elide: Text.ElideMiddle
+                text: status.shown
+                color: pal.fg
+                font.family: pal.font
+                font.pixelSize: pal.fontSize - 1
+            }
+            Timer { id: statusTimer; interval: 2500; onTriggered: status.message = "" }
+        }
+    }
+
+    // ---- Sidebar ------------------------------------------------------------
+    Sidebar {
+        id: sidebar
+        z: 50
+        visible: win.sidebarMode && win.fullscreenTab === null && x > -width
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: win.sidebarWidth
+        x: win.sidebarOpen ? 0 : -width - 16
+        Behavior on x { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+        floating: !win.sidebarPinned
+        pal: pal
+        tabs: win.tabs
+        current: win.current
+        currentTab: win.currentTab
+        pinned: win.sidebarPinned
+        onActivate: i => win.select(i)
+        onCloseTab: i => win.closeTab(i)
+        onNewTab: win.openTab("", true, false, win.current + 1)
+        onOpenPalette: win.focusOmnibox()
+        onTogglePin: win.toggleSidebar()
+        onBack: if (win.currentTab) win.currentTab.view.goBack()
+        onForward: if (win.currentTab) win.currentTab.view.goForward()
+        onReload: win.reloadOrStop()
+        onWindowMove: win.startSystemMove()
+        onWindowToggleMaximized: win.toggleMaximized()
+    }
+
+    // ---- Command palette: the address field, on demand -----------------------
+    Item {
+        id: palette
+        anchors.fill: parent
+        z: 100
+        visible: false
+        function open(tabsOnly) {
+            visible = true
+            paletteBox.focusField(tabsOnly)
+        }
+        function close() {
+            if (!visible) return
+            visible = false
+            if (win.currentTab && !win.currentTab.blank) win.currentTab.view.forceActiveFocus()
+            if (!sidebar.hovered) peekTimer.restart()
+        }
+
+        Rectangle { anchors.fill: parent; color: "black"; opacity: 0.28 }
+        MouseArea { anchors.fill: parent; onClicked: palette.close() }
+
+        Rectangle {
+            id: card
+            width: Math.min(680, parent.width - 60)
+            height: 48
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: Math.round(parent.height * 0.16)
+            radius: 10
+            color: pal.bgDark
+            border.width: 1
+            border.color: pal.accent
+            MouseArea { anchors.fill: parent }  // clicks on the card stay here
+
+            Omnibox {
+                id: paletteBox
+                anchors.fill: parent
+                anchors.margins: 6
+                pal: pal
+                browser: browser
+                tabs: win.tabs
+                currentTab: win.currentTab
+                onGo: text => { palette.close(); win.go(text) }
+                onSwitchTo: i => { palette.close(); win.select(i) }
+                onDismissed: palette.close()
+                onEditingChanged: if (!editing) Qt.callLater(() => { if (!paletteBox.editing) palette.close() })
+            }
+        }
+    }
+
+    // ---- Frameless window: edges resize (and the left edge reveals tabs) ----
+    MouseArea {
+        id: leftEdge
+        z: 200
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: win.resizable && win.xcb ? 4 : 2
+        visible: (win.sidebarMode && !win.sidebarPinned && win.fullscreenTab === null) || win.resizable
+        hoverEnabled: true
+        acceptedButtons: win.resizable && win.xcb ? Qt.LeftButton : Qt.NoButton
+        cursorShape: win.resizable && win.xcb ? Qt.SizeHorCursor : Qt.ArrowCursor
+        onEntered: if (win.sidebarMode && !win.sidebarPinned && win.fullscreenTab === null) { win.sidebarPeek = true; peekTimer.stop() }
+        onExited: peekTimer.restart()
+        onPressed: win.startSystemResize(Qt.LeftEdge)
+    }
+    Repeater {
+        // Right, top, bottom and the corners. X11 only: Hyprland tiles and
+        // resizes with Super+drag, and these would steal page clicks there.
+        model: win.resizable && win.xcb ? [
+            { e: Qt.RightEdge, c: Qt.SizeHorCursor }, { e: Qt.TopEdge, c: Qt.SizeVerCursor },
+            { e: Qt.BottomEdge, c: Qt.SizeVerCursor },
+            { e: Qt.TopEdge | Qt.LeftEdge, c: Qt.SizeFDiagCursor }, { e: Qt.BottomEdge | Qt.RightEdge, c: Qt.SizeFDiagCursor },
+            { e: Qt.TopEdge | Qt.RightEdge, c: Qt.SizeBDiagCursor }, { e: Qt.BottomEdge | Qt.LeftEdge, c: Qt.SizeBDiagCursor }
+        ] : []
+        delegate: MouseArea {
+            required property var modelData
+            readonly property int e: modelData.e
+            readonly property int g: 4
+            readonly property int corner: 10
+            z: 201
+            x: (e & Qt.RightEdge) ? win.width - (e === Qt.RightEdge ? g : corner) : 0
+            y: (e & Qt.BottomEdge) ? win.height - (e === Qt.BottomEdge ? g : corner) : 0
+            width: (e === Qt.TopEdge || e === Qt.BottomEdge) ? win.width : (e === Qt.RightEdge ? g : corner)
+            height: (e === Qt.RightEdge) ? win.height : ((e === Qt.TopEdge || e === Qt.BottomEdge) ? g : corner)
+            cursorShape: modelData.c
+            onPressed: win.startSystemResize(e)
         }
     }
 

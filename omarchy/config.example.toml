@@ -6,14 +6,27 @@ homepage = ""
 # Search for anything that isn't an address. {} is the query.
 search = "https://duckduckgo.com/?q={}"
 
-# "top" or "left" (vertical tabs, like Yab's sidebar).
-tabs = "top"
+# "sidebar" (default): Yab's look. No toolbar, no address bar, the page
+# edge to edge. Tabs live in a sidebar that slides in when the pointer
+# touches the left edge (or Ctrl+Shift+B) and hides when it leaves;
+# Ctrl+L / Ctrl+T bring up the address field as a palette.
+# "top": classic tab strip and address bar. ("left" means "sidebar".)
+tabs = "sidebar"
+
+# Keep the sidebar open beside the page instead of revealing it on demand.
+# Ctrl+Shift+B or the sidebar's top-left button toggles it at run time.
+pin_sidebar = false
+
+# No window frame or title bar. On Hyprland the compositor draws the
+# border anyway; on X11 drag the sidebar's top row to move the window and
+# the window edges to resize it.
+frameless = true
 
 # Bring last session's tabs back (private tabs never are).
 restore_session = true
 
-# Start with the tab strip and toolbar hidden; Ctrl+Shift+B toggles,
-# Ctrl+L shows the address field on its own.
+# tabs = "top" only: start with the tab strip and toolbar hidden;
+# Ctrl+Shift+B toggles, Ctrl+L shows the address field on its own.
 compact = false
 
 # Default zoom, 1.0 = 100 %.
