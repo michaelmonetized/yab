@@ -380,4 +380,21 @@ mod tests {
         copy_extension(&exts[0].1, &dst).unwrap();
         assert!(dst.join("manifest.json").exists() && !dst.join("_metadata").exists());
     }
+
+    /// Against a real throwaway Chrome profile made with
+    /// `google-chrome --user-data-dir=DIR --password-store=basic`, never a
+    /// real one: `OMAWEB_CHROME_TEST_PROFILE=DIR/Default cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn real_throwaway_chrome_profile() {
+        let Ok(dir) = std::env::var("OMAWEB_CHROME_TEST_PROFILE") else { return };
+        let p = Path::new(&dir);
+        let visits = read_history(p, 1000).unwrap();
+        assert!(!visits.is_empty(), "history");
+        let (keys, _) = keys_for("chrome");
+        let (cookies, failed) = read_cookies(p, &keys).unwrap();
+        eprintln!("history {} cookies {} not decrypted {failed}", visits.len(), cookies.len());
+        assert!(cookies.iter().any(|c| c.name == "omatest" && c.value == "hello123"), "{cookies:?}");
+        assert_eq!(failed, 0);
+    }
 }

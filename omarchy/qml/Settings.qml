@@ -120,7 +120,7 @@ Item {
                         visible: set.section === "general"
                         Head { text: "General" }
                         Row2 { Name { text: "Home page" } Widgets.Field { pal: set.pal; Layout.fillWidth: true; text: set.cfg.homepage || ""; onEditingFinished: set.put("homepage", text) } }
-                        Row2 { Name { text: "Search (%s is the query)" } Widgets.Field { pal: set.pal; Layout.fillWidth: true; text: set.cfg.search || ""; onEditingFinished: set.put("search", text) } }
+                        Row2 { Name { text: "Search ({} is the query)" } Widgets.Field { pal: set.pal; Layout.fillWidth: true; text: set.cfg.search || ""; onEditingFinished: set.put("search", text) } }
                         Row2 {
                             Name { text: "Tabs" }
                             ComboBox { model: ["sidebar", "top"]; currentIndex: set.cfg.tabs === "top" ? 1 : 0; onActivated: i => set.put("tabs", model[i]) }
@@ -257,8 +257,7 @@ Item {
                         onEmChanged: refresh()
                         Connections { target: set.host; function onExtRevChanged() { extSec.refresh() } }
                         Note {
-                            text: "Chrome extensions run through Qt WebEngine\u2019s extension support (Qt 6.10+). Content scripts, storage, background service workers and popups work; " +
-                                  "many chrome.* APIs (tabs, windows, contextMenus, sidePanel, webRequest blocking, native messaging, identity) are missing, so some extensions only partly work. See the README."
+                            text: "Chrome extensions run through Qt WebEngine\u2019s extension support (Qt 6.10+): they install, content scripts run and popups open, but chrome.tabs, windows, contextMenus, sidePanel, blocking webRequest and native messaging are missing, so most extensions only partly work or not at all. See the README for the tested list."
                         }
                         Row2 {
                             Widgets.Field { id: storeField; pal: set.pal; Layout.fillWidth: true; placeholderText: "Chrome Web Store link or extension id" }
@@ -354,7 +353,8 @@ Item {
                         id: impSec
                         visible: set.section === "import"
                         Head { text: "Import from Chrome or Chromium" }
-                        readonly property var sources: set.visible && set.section === "import" ? JSON.parse(set.browser.chromeProfiles()) : []
+                        property var extra: []
+                        readonly property var sources: (set.visible && set.section === "import" ? JSON.parse(set.browser.chromeProfiles()) : []).concat(extra)
                         property int pick: 0
                         Note { text: impSec.sources.length ? "Found these profiles in ~/.config. Close that browser first so its databases aren't locked mid-write." : "No Chrome, Chromium, Brave, Edge or Vivaldi profiles in ~/.config." }
                         Repeater {
@@ -366,6 +366,16 @@ Item {
                                 onClicked: impSec.pick = index
                                 text: modelData.browser + " \u2014 " + modelData.name + "  (" + modelData.dir + ")"
                                 contentItem: Text { leftPadding: 28; text: parent.text; color: set.pal.fg; font.family: set.pal.font; verticalAlignment: Text.AlignVCenter }
+                            }
+                        }
+                        Widgets.Btn { pal: set.pal; text: "A profile folder somewhere else\u2026"; tip: "For Chrome run with --user-data-dir: pick its Default or Profile N folder"; onClicked: chromeDirDialog.open() }
+                        FolderDialog {
+                            id: chromeDirDialog
+                            title: "A Chrome profile folder (Default, Profile 1, \u2026)"
+                            onAccepted: {
+                                const dir = decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, ""))
+                                impSec.extra = impSec.extra.concat([{ browser: "Chrome", name: dir.split("/").pop(), dir: dir, path: dir, keyring_app: "chrome" }])
+                                impSec.pick = impSec.sources.length - 1
                             }
                         }
                         Row2 {

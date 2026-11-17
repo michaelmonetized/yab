@@ -313,4 +313,16 @@ mod tests {
         assert!(set_value(&p, "agent.api_key", &serde_json::json!("x")).is_err());
         assert!(set_value(&p, "zoom", &serde_json::json!("big")).is_err());
     }
+
+    #[test]
+    fn example_config_parses() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config.example.toml");
+        let text = std::fs::read_to_string(&p).unwrap();
+        let _: toml::Value = toml::from_str(&text).expect("config.example.toml is valid TOML");
+        let c = Config::load(&p);
+        assert_eq!(c.agent.api_key_env, "OMAWEB_AGENT_API_KEY");
+        assert!(c.blocker.enabled);
+        assert_eq!(c.archive_after_hours, 12.0);
+        assert!(c.agent.api_key.is_empty(), "the example never carries a key");
+    }
 }

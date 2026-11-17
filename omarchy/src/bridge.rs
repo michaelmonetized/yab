@@ -36,6 +36,9 @@ pub mod qobject {
         #[cxx_name = "reloadTheme"]
         fn reload_theme(self: Pin<&mut Self>);
         #[qinvokable]
+        #[cxx_name = "reloadConfig"]
+        fn reload_config(self: Pin<&mut Self>);
+        #[qinvokable]
         fn resolve(&self, input: &QString) -> QString;
         #[qinvokable]
         fn suggest(&self, input: &QString, profile: &QString) -> QString;
@@ -436,6 +439,8 @@ impl qobject::Browser {
             .ok();
             let mut watched: Vec<std::path::PathBuf> = Vec::new();
             let mut last = theme_fingerprint();
+            let cfg_stamp = || std::fs::metadata(config_file()).and_then(|m| m.modified()).ok();
+            let mut last_cfg = cfg_stamp();
             loop {
                 if let Some(w) = watcher.as_mut() {
                     for p in theme::watch_paths() {
@@ -450,6 +455,14 @@ impl qobject::Browser {
                     std::thread::sleep(Duration::from_millis(250));
                     while rx.try_recv().is_ok() {}
                     watched.retain(|p| p.exists());
+                }
+                // config.toml edited by hand: apply it live too.
+                let c = cfg_stamp();
+                if c != last_cfg {
+                    last_cfg = c;
+                    if qt.queue(|b| b.reload_config()).is_err() {
+                        break;
+                    }
                 }
                 let fp = theme_fingerprint();
                 if fp != last {
@@ -606,13 +619,20 @@ impl qobject::Browser {
         if let Err(e) = config::set_value(&config_file(), &key.to_string(), &v) {
             return qs(&e);
         }
+        self.as_mut().reload_config();
+        QString::default()
+    }
+
+    pub fn reload_config(mut self: Pin<&mut Self>) {
         let j = {
             let mut c = core().lock().unwrap();
             c.config = Config::load(&config_file());
             serde_json::to_string(&c.config).unwrap_or_default()
         };
-        self.as_mut().set_config_json(qs(&j));
-        QString::default()
+        let j = qs(&j);
+        if *self.config_json() != j {
+            self.as_mut().set_config_json(j);
+        }
     }
 
     pub fn config_path(&self) -> QString {

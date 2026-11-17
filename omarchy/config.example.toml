@@ -32,6 +32,46 @@ compact = false
 # Default zoom, 1.0 = 100 %.
 zoom = 1.0
 
+# Move today's (unpinned) tabs nobody touched for this many hours to the
+# archive (Ctrl+Alt+A). 0 = never.
+archive_after_hours = 12.0
+
+# Peek: links that ask for a new window and pop-ups open in a card over
+# the page. false = they open as tabs.
+peek = true
+
+# Force a dark rendering of every page (Chromium's auto dark mode).
+force_dark = false
+
+# The profile new spaces and plain `omaweb` use. Profiles are made in
+# Settings or with `omaweb --profile NAME`.
+default_profile = "Default"
+
+# Ad and tracker blocking inside the engine, before requests are made.
+[blocker]
+enabled = true
+# Hosts files or adblock lists (||domain^ rules), URLs or file:// paths.
+# Refreshed weekly into ~/.cache/omaweb/lists.
+lists = ["https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext"]
+# Sites never blocked on (Ctrl+E toggles the current one).
+allow = []
+
+# The agent panel (Ctrl+Shift+A): any OpenAI-compatible chat API.
+[agent]
+endpoint = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+# The key is read from this environment variable (then OPENAI_API_KEY),
+# else from api_key_command's output. Local endpoints need none.
+# Never put a key in a file you share.
+api_key_env = "OMAWEB_AGENT_API_KEY"
+api_key_command = ""
+# How much of the page's visible text is sent, in characters.
+max_page_chars = 12000
+# Extra standing instructions for the agent.
+instructions = ""
+# Ask before the agent clicks or types on a page.
+confirm_actions = true
+
 # Keyword searches, on top of the built-ins (g, ddg, gh, yt, w, aw, aur,
 # pkg, crates, hypr). Type "rs serde" to search docs.rs.
 [keywords]

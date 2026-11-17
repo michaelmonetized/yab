@@ -3,9 +3,17 @@
 This fork rewrites Yab's desktop browser for Linux and [Omarchy](https://omarchy.org):
 **[Omaweb](omarchy/)**, a keyboard-first, Hyprland-native browser with a Rust
 core, Qt Quick chrome and Qt WebEngine pages, coloured live by the active
-Omarchy theme.
+Omarchy theme. It has Yab's sidebar (favorites, Spaces with theme
+colours, folders, pinned and today's tabs, auto-archive), Chrome-style
+profiles with a Chrome/Chromium importer, an agent panel for any
+OpenAI-compatible model, split view, Peek, reading mode, built-in ad and
+tracker blocking, bookmarks, a settings screen and Chrome Web Store
+installs. Qt WebEngine only runs a small part of the Chrome extension API,
+so most real extensions install but don't work; the
+[README](omarchy/README.md#extensions) has the tested list and the CEF
+alternative.
 
-![Omaweb in Omarchy's Tokyo Night theme: frameless, no toolbar, the tab sidebar revealed from the left edge](omarchy/docs/page.png)
+![Omaweb: frameless, the sidebar pinned with favorites, a folder and two spaces, the agent panel on the right](omarchy/docs/page.png)
 
 - Build, keys, Omarchy integration and why this stack: [omarchy/README.md](omarchy/README.md)
 - Quick start on Omarchy: `sudo pacman -S --needed rust qt6-base qt6-declarative qt6-webengine qt6-wayland && cd omarchy && make install && omaweb`
