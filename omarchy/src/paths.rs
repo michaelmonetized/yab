@@ -27,6 +27,10 @@ pub fn state_dir() -> PathBuf {
     xdg("XDG_STATE_HOME", ".local/state").join("omaweb")
 }
 
+pub fn cache_dir() -> PathBuf {
+    xdg("XDG_CACHE_HOME", ".cache").join("omaweb")
+}
+
 pub fn runtime_dir() -> PathBuf {
     match env::var_os("XDG_RUNTIME_DIR") {
         Some(v) if !v.is_empty() => PathBuf::from(v),

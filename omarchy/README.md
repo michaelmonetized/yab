@@ -15,7 +15,10 @@ and searches go through one field that appears on demand as a palette
 (Ctrl+L, Ctrl+T) and is gone again once you press Return. It does not reuse
 Yab's Swift code, names or icons.
 
-![Omaweb with the sidebar revealed over a page, Tokyo Night](docs/page.png)
+![Omaweb with the sidebar pinned (favorites, the Reading folder, pinned and today's tabs, two spaces in the footer) and the agent panel open](docs/page.png)
+![Split view: two tabs side by side](docs/split.png)
+![Peek: a link opened in a card over the page](docs/peek.png)
+![Settings → Extensions with uBlock Origin Lite, Dark Reader and Bitwarden installed from the Chrome Web Store](docs/settings-extensions.png)
 ![A new tab: the start page with the address palette open](docs/start.png)
 
 ## Why this stack
@@ -29,8 +32,12 @@ Yab's Swift code, names or icons.
   start (it builds `QGuiApplication` with `argc = 0`). So Omaweb is a
   standalone Qt Quick app with the same QML idiom and its own process.
 - **Rust core via [cxx-qt](https://github.com/KDAB/cxx-qt).** Theme
-  parsing and watching, the address field's logic, history, session and
-  single-instance IPC are Rust (`src/`, unit-tested); QML only draws.
+  parsing and watching, the address field's logic, history, the workspace
+  (spaces, folders, archive), profiles, bookmarks, the blocker's lists,
+  the agent's requests, extension downloads, the Chrome importer and
+  single-instance IPC are Rust (`src/`, unit-tested); a small C++ object
+  (`cpp/webtools.*`) hosts the request interceptor and cookie store; QML
+  only draws.
 - **Qt WebEngine (Chromium).** Sites work the way they do in Chromium,
   Omarchy's default browser, with DevTools built in.
 - **Not egui, not iced, not Rune (yet).** [Rune](https://github.com/anomalyco/rune),
@@ -66,62 +73,216 @@ Yab's Swift code, names or icons.
 - **Mako notifications** for finished and failed downloads, through
   `notify-send`.
 - **XDG paths.** Config `~/.config/omaweb/config.toml`
-  ([example](config.example.toml)), history `~/.local/share/omaweb`,
-  session `~/.local/state/omaweb`.
+  ([example](config.example.toml)); profiles, history, bookmarks,
+  extensions and hidden elements in `~/.local/share/omaweb`; the workspace
+  (spaces, folders, tabs, archive, watches) in
+  `~/.local/state/omaweb/workspace.json`; filter lists in `~/.cache/omaweb`.
 
 ## What works
 
-- Chromeless by default: the page fills the window. The tab sidebar is
+- **Chromeless by default.** The page fills the window. The sidebar is
   hidden until the pointer reaches the left edge (or Ctrl+Shift+B), hides
-  when the pointer leaves, and can be pinned open (`pin_sidebar = true`,
-  its top-left button, or Ctrl+Shift+B). Middle-click closes a tab; links
-  that ask for a new window open as tabs. `tabs = "top"` brings back the
-  classic tab strip and address bar.
-- Frameless on every platform (`frameless = false` to get the window
-  manager's title bar back). On X11 the sidebar's top row moves the
-  window (double-click maximises) and the window edges resize it; on
-  Hyprland the compositor does both.
-- One field, on demand: Ctrl+L or Ctrl+T opens it as a palette over the
-  page and Return or Esc puts it away. Addresses go, words search (DuckDuckGo unless you set
-  `search`), keyword searches (`aw hyprland`, `aur yay`, `gh rune`,
-  `crates serde`, `hypr ...`), completion from your history and open tabs.
-  Nothing is sent until Return.
-- Back, forward, reload and stop (keys, or the sidebar's buttons); load
-  progress as an accent hairline along the top of the page.
-- Find in page, zoom, full screen (page or window), view source, DevTools.
-- Private tabs on an off-the-record profile; never saved, never in history.
-- Session restore and reopen-closed-tab.
-- Permission prompts (camera, mic, location, notifications, screen share)
-  and downloads to `~/Downloads`.
-- `tabs = "top"` has a compact mode: Ctrl+Shift+B hides the strip and
-  toolbar, Ctrl+L brings the field back.
+  when the pointer leaves, and can be pinned open. `tabs = "top"` brings
+  back a classic tab strip and address bar.
+- **Yab's sidebar.** Window controls and back / forward / reload, the
+  address as a pill (with the count of blocked requests and a bookmark
+  star), extension buttons, **favorites** as tiles at the top (the same in
+  every space), the space's name, its **folders** and **pinned tabs**, New
+  tab, then **today's tabs**. Drag tabs into and out of folders, onto
+  favorites, between pinned and today, or onto another space's icon.
+  Right-click a tab, folder or space for everything else.
+- **Spaces.** Separate sets of tabs, each with a colour taken from the
+  Omarchy theme (accent, blue, magenta, …) so it follows theme swaps.
+  Switch from the footer, Ctrl+Alt+1…9, Ctrl+Alt+Left/Right, or a
+  two-finger swipe over the sidebar. Each space opens its tabs in one
+  **profile**, like Arc.
+- **Auto-archive.** Today's tabs nobody touched for `archive_after_hours`
+  (12 by default, 0 = never) move to the archive (Ctrl+Alt+A), where they
+  can be restored. Pinned tabs, favorites and the current tab never do.
+  Pinned tabs keep their pinned address ("Back to pinned address").
+- **Footer.** Downloads (with an active-count badge), the space icons,
+  new space, settings and the agent.
+- **Settings** (Ctrl+,): every key of `config.toml` worth flipping, spaces
+  and profiles, the agent, blocking, extensions, passwords, the Chrome
+  importer and the keyboard. Writes keep your file's comments, and hand
+  edits to `config.toml` apply live too.
+- **Library**: bookmarks (Ctrl+Shift+D adds one, Ctrl+Alt+B lists them),
+  history (Ctrl+H), downloads (Ctrl+Shift+J) and the archive, per profile.
+- **Agent panel** (Ctrl+Shift+A), see below.
+- **Split view** (Ctrl+Alt+S): the current tab beside the next one, or any
+  tab from its menu; drag the divider, double-click it to unsplit.
+- **Peek**: links that ask for a new window, and pop-ups, open in a card
+  over the page; open it as a tab, split with it, or Esc. `peek = false`
+  sends them to tabs.
+- **Ad and tracker blocking** inside the engine (a
+  `QWebEngineUrlRequestInterceptor`), before requests are made, from host
+  lists and the `||domain^` rules of adblock lists (`[blocker] lists`,
+  refreshed weekly into `~/.cache/omaweb`), plus a built-in list. Per-site
+  allow list and blocked counts in site controls (Ctrl+E).
+- **Hide something** (Ctrl+Shift+H): click any element and it stays
+  hidden on that site; site controls bring it back.
+- **Reading mode** (Ctrl+Alt+R): the article alone, in the theme's colours.
+- **Passwords in your keyring.** Omaweb offers to save a password when you
+  sign in and fills it (Ctrl+Alt+L). Passwords live only in the Secret
+  Service (`secret-tool`, so GNOME Keyring or KWallet); Omaweb's files only
+  hold which sites have one.
+- **Dark pages** (`force_dark = true`), lazy tabs (restored tabs cost
+  nothing until shown), find in page, zoom, full screen, view source,
+  DevTools, private tabs, session restore, reopen-closed-tab, permission
+  prompts, downloads with Mako notifications.
+
+## Profiles
+
+Each profile is a separate persistent Qt WebEngine profile: its own
+cookies, local storage, cache, history, bookmarks, saved-password index and
+extensions.
+
+- `Default` keeps the original storage (`~/.local/share/omaweb/omaweb/QtWebEngine/omaweb`),
+  so existing sign-ins survive the upgrade. Others live in
+  `~/.local/share/omaweb/profiles/<name>/` (cache in `~/.cache/omaweb/profiles/<name>`).
+- Add, remove and pick the default in Settings → Spaces & profiles; bind
+  any space to a profile there or from the space's menu.
+- `omaweb --profile Work https://…` opens in the space bound to `Work`
+  (creating the profile and a space for it if needed), also when Omaweb is
+  already running. `--profile-directory` is accepted for Chrome-style
+  launchers.
+
+**Import from Chrome** (Settings → Import from Chrome) finds Google Chrome
+(stable, beta, dev), Chromium, Brave, Edge and Vivaldi profiles in
+`~/.config` by the names in their `Local State`, or any profile folder you
+point it at (for Chrome run with `--user-data-dir`), and imports into the
+Omaweb profile you choose:
+
+| What | How | Can't come across |
+| --- | --- | --- |
+| Bookmarks | `Bookmarks` JSON, folders kept under "Imported (…)" | — |
+| History | `History` SQLite | visit-by-visit detail beyond counts and last visit |
+| Cookies (stay signed in) | `Cookies` SQLite, decrypted (AES-128-CBC, v10 with Chrome's built-in key, v11 with the keyring password read by `secret-tool`), written straight into the web engine's cookie store | v11 cookies when the keyring can't be read; app-bound or device-bound session cookies |
+| Passwords | `Login Data`, decrypted the same way, saved into the Secret Service under Omaweb's entries | everything when `secret-tool` isn't installed (they are decrypted in memory, then dropped, and the report says so) |
+| Extensions | copied from `Extensions/<id>/<version>` and installed into the profile | see Extensions below for what runs |
+
+Open tabs, payment cards, autofill addresses, site settings and Chrome
+sync never come across. Databases are copied to a temporary directory
+before reading, so Chrome may stay open, but close it for a consistent
+snapshot. Nothing decrypted is written to Omaweb's files.
+
+## Extensions
+
+Omaweb uses Qt WebEngine's extension support (Qt 6.10+,
+`QWebEngineExtensionManager`), per profile:
+
+- Install from the **Chrome Web Store**: an "Add to Omaweb" button appears
+  on store pages, or paste a store link or id in Settings → Extensions.
+  Omaweb downloads the CRX for Chromium 140 (Qt 6.11's), unpacks it, keeps
+  its signing key so the extension has its store id, and installs it.
+- Load an **unpacked** folder (remembered across restarts) or install a
+  **.crx / .zip** file.
+- Enable, disable (remembered; Qt doesn't keep it) and remove; toolbar
+  buttons in the sidebar open the extension's popup.
+
+**What actually works, tested on Qt 6.11.3 / Chromium 140 (Nov 2026):**
+
+| Extension | Installs | Popup | Does its job | Why not |
+| --- | --- | --- | --- | --- |
+| uBlock Origin Lite | yes, store id kept | draws, no stats | **no**: requests it should block go through | its service worker dies at `chrome.tabs.onRemoved` (no `chrome.tabs`), so it never enables its rulesets |
+| Dark Reader | yes | stuck on "Loading, please wait" | **partly**: pages turn dark with its defaults | its background stops at an `addListener` on an API Qt doesn't provide, so the popup never gets an answer: no per-site toggles or settings |
+| Bitwarden | yes | spinner forever | **no** | its background hits missing APIs (`onClicked` of an undefined namespace) and the popup's messages go unanswered |
+
+Qt WebEngine implements only a slice of the extension platform (manifest
+loading, content scripts, basic `runtime` messaging, `storage`, action
+popups as pages an embedder can show). It has no `chrome.tabs`,
+`chrome.windows`, `contextMenus`, `sidePanel`, `commands`, `identity`,
+blocking `webRequest`, native messaging, or a toolbar-click (action
+`onClicked`) path an embedder can drive. Almost every real extension
+touches these on start, so **Chrome extension parity is not
+possible on Qt WebEngine today**; simple content-script extensions are the
+ceiling. Omaweb's own blocker, passwords and hide-element cover the most
+common reasons people install extensions.
+
+**The alternative** is to embed full Chromium through
+[CEF](https://bitbucket.org/chromiumembedded/cef) with its Chrome runtime
+(the route upstream Yab takes on macOS), which brings the real extension
+system, the Web Store and Chrome's profile format. For Omaweb that means:
+a CEF build for Linux (x86_64 and aarch64), rendering CEF's off-screen or
+child-window output into the Qt Quick scene (or replacing Qt Quick with a
+thin native shell), re-plumbing tabs, profiles, downloads, permissions,
+find, DevTools and the request blocker onto CEF's handlers, and shipping a
+~250 MB runtime. Estimate: **6–10 weeks** of focused work for one person to
+reach today's feature set on CEF, plus ongoing Chromium updates (CEF
+follows Chrome's 4-week releases).
+
+## Agent
+
+A chat panel on the right (Ctrl+Shift+A, or ✦ in the sidebar footer) that
+reads the current tab (title, address, selected text and visible text, up
+to `agent.max_page_chars`) and can summarize, answer, and act:
+open an address, search the web, click a link or button, type into a
+field (and submit), scroll, find in page, and **watch** a tab ("tell me
+when this drops under $200": it re-reads the tab every N minutes and
+notifies you when the condition holds). Clicking and typing ask first
+unless `agent.confirm_actions = false`. Private tabs are never read or
+sent, and page text is marked as untrusted for the model.
+
+It speaks the OpenAI chat-completions API (streaming, tool calls), so any
+compatible server works: OpenAI, OpenRouter, Groq, or a local Ollama /
+llama.cpp / LM Studio (local endpoints need no key).
+
+```toml
+[agent]
+endpoint = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+api_key_env = "OMAWEB_AGENT_API_KEY"   # read from the environment
+# api_key_command = "secret-tool lookup service openai"
+```
+
+The key comes from the environment variable named by `api_key_env`
+(default `OMAWEB_AGENT_API_KEY`, then `OPENAI_API_KEY`), else from
+`api_key_command`'s output, else `agent.api_key` in your config. The
+settings screen never asks for or writes the key.
 
 ## Keys
+
+Ctrl and Alt only; Super stays Hyprland's.
 
 | Keys | Does |
 | --- | --- |
 | Ctrl+L, Alt+D, F6 | Address palette (Esc closes it) |
-| Ctrl+K | Jump to an open tab (palette) |
-| Ctrl+T / Ctrl+Shift+N | New tab / new private tab (opens the palette) |
-| Ctrl+Shift+B | Show and pin / hide the tab sidebar (`tabs = "top"`: compact mode) |
+| Ctrl+K | Jump to any open tab, in any space |
+| Ctrl+T / Ctrl+Shift+N | New tab / new private tab |
+| Ctrl+Shift+B, Ctrl+S | Show and pin / hide the sidebar (`tabs = "top"`: compact mode) |
 | Pointer at the left edge | Reveal the sidebar; it hides when the pointer leaves |
-| Ctrl+W | Close tab |
+| Ctrl+W | Close tab (pinned tabs and favorites unload instead) |
 | Ctrl+Shift+T | Reopen closed tab |
 | Ctrl+Tab, Ctrl+PgDown / Ctrl+Shift+Tab, Ctrl+PgUp | Next / previous tab |
-| Ctrl+Shift+PgDown / PgUp | Move tab right / left |
-| Ctrl+1 … Ctrl+8, Ctrl+9 (also Alt+n) | Tab n, last tab |
+| Ctrl+Shift+PgDown / PgUp | Move tab down / up |
+| Ctrl+1 … Ctrl+8, Ctrl+9 (also Alt+n) | Tab n (favorites first), last tab |
+| Ctrl+Alt+1 … 9 | Space n |
+| Ctrl+Alt+Right / Left | Next / previous space |
+| Ctrl+Alt+N | New space |
+| Ctrl+D | Pin / unpin tab |
+| Ctrl+Shift+D | Bookmark / unbookmark page |
+| Ctrl+Alt+B / Ctrl+H, Ctrl+Y / Ctrl+Shift+J, Ctrl+J / Ctrl+Alt+A | Bookmarks / history / downloads / archive |
+| Ctrl+Shift+A | Agent panel |
+| Ctrl+Alt+S | Split with the next tab (again to unsplit) |
+| Ctrl+Alt+R | Reading mode |
+| Ctrl+Shift+H | Hide something on this site |
+| Ctrl+E | Site controls (blocking, hidden elements, cookies) |
+| Ctrl+Alt+L | Fill the saved password |
+| Ctrl+Shift+V | Paste and go |
+| Ctrl+, | Settings |
 | Alt+Left / Alt+Right | Back / forward |
 | Ctrl+R, F5 / Ctrl+Shift+R | Reload / reload without cache |
-| Esc | Stop loading |
+| Esc | Stop loading; close Peek, the library or settings |
 | Ctrl+F, then Enter / Shift+Enter, Ctrl+G | Find, next, previous |
 | Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / reset |
 | F11 | Full screen |
 | Ctrl+U | View source |
 | F12, Ctrl+Shift+I | DevTools |
 | Ctrl+Shift+C | Copy page address |
-| Ctrl+Q | Quit (session is saved) |
+| Ctrl+Q | Quit (everything is saved) |
 
 In the address palette, Up/Down or Ctrl+N/Ctrl+P pick a suggestion.
+Shift+click a link (or any pop-up) to Peek at it.
 
 ## Build and run
 
@@ -139,7 +300,9 @@ rule to copy into your Hyprland config; pick a key Omarchy isn't using.
 
 cxx-qt finds Qt through `qmake6`/`qmake` on `PATH`, or `QMAKE=/path/to/qmake`.
 `cargo test` runs the Rust tests (theme, address field, history, session,
-config). `omaweb --theme` prints the palette it would use.
+config, workspace, bookmarks, blocker, agent, extensions, Chrome import,
+passwords, profiles). `OMAWEB_CHROME_TEST_PROFILE=/tmp/x/Default cargo test -- --ignored`
+also runs the importer against a throwaway Chrome profile. `omaweb --theme` prints the palette it would use.
 
 Environment overrides: `OMAWEB_THEME_DIR` (read a theme dir directly),
 `OMAWEB_FONT`. Omaweb sets `QT_WAYLAND_DISABLE_WINDOWDECORATION=1`,
@@ -148,14 +311,14 @@ set them yourself.
 
 ## Not here yet
 
-- Yab's iPhone and Android companions, sync, agents, ad blocking, reading
-  mode, split view, Peek and password-manager integration. The companions
-  stay in the upstream tree, untouched.
-- Bookmarks (history and the start page cover most of it for now) and a
-  settings screen (edit `config.toml`).
-- Spaces, pinned favourites, tab folders (Yab's sidebar has them; Omaweb's
-  sidebar shows the tab list only).
-- Web extensions; Qt WebEngine has no Chrome extension support.
+- **Chrome extensions that use `chrome.tabs` and friends**, which is most of
+  them; see Extensions for what Qt WebEngine can't do and the CEF route.
+- Yab's floating video (picture-in-picture: Qt WebEngine has no PiP),
+  end-to-end encrypted sync, agents in their own tabs with your sign-ins
+  (Omaweb's agent is a side panel acting on the current tab), and Yab's
+  iPhone and Android companions (still in the upstream tree, untouched).
+- Hooking into third-party password managers (1Password, Bitwarden apps);
+  Omaweb uses the Secret Service.
 - Packaging. Nothing is published to the AUR.
 
 ## Credit and license

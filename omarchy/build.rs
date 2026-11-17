@@ -9,6 +9,11 @@ fn main() {
         "qml/Omnibox.qml",
         "qml/FindBar.qml",
         "qml/StartPage.qml",
+        "qml/AgentPanel.qml",
+        "qml/Peek.qml",
+        "qml/Library.qml",
+        "qml/Settings.qml",
+        "qml/Widgets.qml",
     ];
     let mut module = QmlModule::new("app.omaweb");
     for f in qml {
@@ -18,8 +23,11 @@ fn main() {
         .qt_module("Network")
         .qt_module("Quick")
         .qt_module("WebEngineQuick")
+        .qt_module("WebEngineCore")
         .include_dir("cpp")
         .cpp_file("cpp/platform.cpp")
+        .cpp_file("cpp/webtools.h")
+        .cpp_file("cpp/webtools.cpp")
         .files(["src/bridge.rs"])
         .build();
 }

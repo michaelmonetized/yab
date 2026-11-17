@@ -28,6 +28,7 @@ impl Session {
             .unwrap_or_default()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
