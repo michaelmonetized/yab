@@ -139,6 +139,60 @@ impl History {
         hits.into_iter().take(limit).map(|(_, e)| e.clone()).collect()
     }
 
+    /// Most recent first, for the history panel; `query` filters like
+    /// address completion does.
+    pub fn recent(&self, query: &str, limit: usize) -> Vec<Entry> {
+        let words: Vec<String> = query.to_lowercase().split_whitespace().map(String::from).collect();
+        let mut all: Vec<&Entry> = self
+            .entries
+            .values()
+            .filter(|e| {
+                let (u, t) = (e.url.to_lowercase(), e.title.to_lowercase());
+                words.iter().all(|w| u.contains(w.as_str()) || t.contains(w.as_str()))
+            })
+            .collect();
+        all.sort_by(|a, b| b.last.cmp(&a.last));
+        all.into_iter().take(limit).cloned().collect()
+    }
+
+    /// Visits brought in from another browser (Chrome's History database).
+    /// Appended to the log like ordinary visits, keeping their own times.
+    pub fn import(&mut self, visits: Vec<Visit>) -> usize {
+        let mut n = 0;
+        let mut out = String::new();
+        for v in visits {
+            if !worth_keeping(&v.url) {
+                continue;
+            }
+            out.push_str(&serde_json::to_string(&v).unwrap_or_default());
+            out.push('\n');
+            self.apply(v);
+            n += 1;
+        }
+        if let Some(path) = &self.path {
+            if let Some(dir) = path.parent() {
+                let _ = fs::create_dir_all(dir);
+            }
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+                let _ = f.write_all(out.as_bytes());
+            }
+        }
+        n
+    }
+
+    pub fn remove(&mut self, url: &str) {
+        if self.entries.remove(url).is_some() {
+            self.rewrite();
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        if let Some(path) = &self.path {
+            let _ = fs::write(path, "");
+        }
+    }
+
     pub fn top(&self, limit: usize) -> Vec<Entry> {
         let t = now();
         let mut all: Vec<&Entry> = self.entries.values().collect();

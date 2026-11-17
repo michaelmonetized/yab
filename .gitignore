@@ -86,3 +86,21 @@ Cookies-journal
 /omarchy/config.toml
 /omarchy/*.log
 /omarchy/nohup.out
+# Omaweb state added with spaces, profiles and extensions (only if a dev run
+# points XDG dirs into the tree): workspace, per-profile data, the password
+# index, unpacked and imported extensions, blocklist caches, Chrome imports.
+workspace.json
+profiles.json
+bookmarks.json
+hidden.json
+passwords.json
+unpacked-extensions.json
+disabled-extensions.json
+extensions-src/
+/omarchy/profiles/
+blocklist.txt
+/omarchy/lists/
+Login Data
+Login Data-journal
+Local State
+*.crx

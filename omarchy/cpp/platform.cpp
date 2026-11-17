@@ -1,8 +1,10 @@
 #include "platform.h"
+#include "webtools.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QStyleHints>
+#include <QtQml/qqml.h>
 #include <QtWebEngineQuick/QtWebEngineQuick>
 
 namespace omaweb {
@@ -11,6 +13,13 @@ void init_webengine()
 {
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QtWebEngineQuick::initialize();
+    qmlRegisterSingletonInstance("app.omaweb.native", 1, 0, "WebTools", WebTools::instance());
+}
+
+void add_cookie(const QString& profile, const QString& name, const QString& value, const QString& domain,
+                const QString& path, std::int64_t expires, bool secure, bool http_only, std::int32_t same_site)
+{
+    WebTools::instance()->addCookie(profile, name, value, domain, path, expires, secure, http_only, same_site);
 }
 
 void set_desktop_file_name(const QString& name)

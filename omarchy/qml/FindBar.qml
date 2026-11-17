@@ -15,6 +15,7 @@ Rectangle {
     color: pal.bgDark
 
     function open() { visible = true; input.forceActiveFocus(); input.selectAll() }
+    function openWith(t) { visible = true; input.text = t; if (view && t.length) view.findText(t) }
     function close() {
         visible = false
         if (view) { view.findText(""); view.forceActiveFocus() }

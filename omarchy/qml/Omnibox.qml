@@ -8,6 +8,8 @@ Item {
     property QtObject browser
     property var tabs: []
     property var currentTab: null
+    property string profileName: "Default"
+    readonly property string currentUid: currentTab ? currentTab.uid : ""
     property alias text: field.text
     readonly property bool editing: field.activeFocus
     signal go(string text)
@@ -34,15 +36,15 @@ Item {
             const lq = q.toLowerCase()
             for (let i = 0; i < tabs.length; ++i) {
                 const t = tabs[i]
-                if (t === currentTab) continue
+                if (t.uid === currentUid) continue
                 if (t.title.toLowerCase().indexOf(lq) >= 0 || t.url.toString().toLowerCase().indexOf(lq) >= 0)
                     out.push({ kind: "tab", index: i, title: t.title, url: t.url.toString() })
                 if (out.length >= 3) break
             }
-            out = JSON.parse(browser.suggest(q)).concat(out)
+            out = JSON.parse(browser.suggest(q, profileName)).concat(out)
         } else if (tabMode) {
             for (let i = 0; i < tabs.length; ++i)
-                if (tabs[i] !== currentTab) out.push({ kind: "tab", index: i, title: tabs[i].title, url: tabs[i].url.toString() })
+                if (tabs[i].uid !== currentUid) out.push({ kind: "tab", index: i, title: tabs[i].title, url: tabs[i].url.toString() })
         }
         items = out.slice(0, 10)
         sel = 0
@@ -134,7 +136,7 @@ Item {
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
                             width: 56
-                            text: row.modelData.kind === "tab" ? "tab" : row.modelData.kind === "search" ? "search" : row.modelData.kind === "go" ? "go" : "visited"
+                            text: row.modelData.kind === "tab" ? "tab" : row.modelData.kind === "search" ? "search" : row.modelData.kind === "go" ? "go" : row.modelData.kind === "bookmark" ? "\u2605" : "visited"
                             color: row.index === box.sel ? box.pal.accent : box.pal.fgDark
                             font.family: box.pal.font
                             font.pixelSize: box.pal.fontSize - 1

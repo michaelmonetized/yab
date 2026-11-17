@@ -8,11 +8,12 @@ Rectangle {
     property QtObject pal
     property QtObject browser
     property bool isPrivate: false
+    property string profileName: "Default"
     property var sites: []
     signal open(string url)
     color: pal.bg
 
-    onVisibleChanged: if (visible) sites = JSON.parse(browser.topSites())
+    onVisibleChanged: if (visible) sites = JSON.parse(browser.topSites(profileName))
 
     ColumnLayout {
         anchors.centerIn: parent
@@ -84,7 +85,7 @@ Rectangle {
 
         Text {
             Layout.alignment: Qt.AlignHCenter
-            text: "ctrl+l address · ctrl+k tabs · ctrl+t new · ctrl+shift+n private · ctrl+f find · ctrl+shift+b sidebar · left edge: tabs"
+            text: "ctrl+l address · ctrl+k tabs · ctrl+t new · ctrl+shift+a agent · ctrl+alt+←/→ spaces · ctrl+, settings · left edge: tabs"
             color: page.pal.muted
             font.family: page.pal.font
             font.pixelSize: page.pal.fontSize - 1
