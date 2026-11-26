@@ -44,7 +44,9 @@ fn omaweb_running() -> bool {
 }
 
 fn home() -> PathBuf {
-    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"))
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
 fn xdg(var: &str, fallback: &str) -> PathBuf {
@@ -93,29 +95,124 @@ pub fn home_dir() -> PathBuf {
 
 fn block(to: &Path) {
     if !to.exists() {
-        BLOCKED.lock().unwrap_or_else(|e| e.into_inner()).push(to.to_path_buf());
+        BLOCKED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(to.to_path_buf());
     }
 }
 
-fn move_if_absent(from: &Path, to: &Path) {
-    if !from.exists() || to.exists() {
-        return;
+fn real_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false)
+}
+
+/// A directory is a stub when it holds nothing but empty directories.
+/// Symlinks count as content so the walk never follows one.
+fn stub_dir(path: &Path) -> bool {
+    if !real_dir(path) {
+        return false;
     }
-    if let Some(parent) = to.parent() {
-        if !creation_blocked(parent) {
-            let _ = fs::create_dir_all(parent);
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        if !stub_dir(&entry.path()) {
+            return false;
         }
     }
-    match rename_noreplace(from, to) {
+    true
+}
+
+fn remove_stub(path: &Path) -> io::Result<()> {
+    if !real_dir(path) {
+        return Err(io::Error::new(io::ErrorKind::Other, "not a stub"));
+    }
+    for entry in fs::read_dir(path)? {
+        remove_stub(&entry?.path())?;
+    }
+    fs::remove_dir(path)
+}
+
+fn move_if_absent(from: &Path, to: &Path) {
+    if fs::symlink_metadata(from).is_err() {
+        return;
+    }
+    match fs::symlink_metadata(to) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => relocate(from, to),
+        Ok(_) if real_dir(from) && real_dir(to) => {
+            if stub_dir(to) && remove_stub(to).is_ok() {
+                relocate(from, to);
+            } else {
+                merge_dirs(from, to);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn relocate(from: &Path, to: &Path) {
+    match rename_onto(from, to) {
         Ok(()) => {}
-        Err(err) if err.raw_os_error() == Some(17) || err.raw_os_error() == Some(2) => {}
+        Err(err) if err.raw_os_error() == Some(2) => {}
+        Err(err) if err.raw_os_error() == Some(17) && real_dir(from) && real_dir(to) => {
+            merge_dirs(from, to);
+        }
         Err(err) => {
-            eprintln!("qi: couldn't move {} to {}: {err}", from.display(), to.display());
+            eprintln!(
+                "qi: couldn't move {} to {}: {err}",
+                from.display(),
+                to.display()
+            );
             if from.exists() && !to.exists() {
                 block(to);
             }
         }
     }
+}
+
+fn rename_onto(from: &Path, to: &Path) -> io::Result<()> {
+    if let Some(parent) = to.parent() {
+        if !creation_blocked(parent) {
+            let _ = fs::create_dir_all(parent);
+        }
+    }
+    rename_noreplace(from, to)
+}
+
+/// Moves each missing child from `from` into `to`. An existing file stays,
+/// and so does its copy in `from`, so a later launch can try again. `from`
+/// is removed only once nothing is left in it.
+fn merge_dirs(from: &Path, to: &Path) {
+    let Ok(entries) = fs::read_dir(from) else {
+        return;
+    };
+    let names: Vec<_> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
+        .collect();
+    for name in names {
+        let src = from.join(&name);
+        let dst = to.join(&name);
+        if fs::symlink_metadata(&src).is_err() {
+            continue;
+        }
+        match fs::symlink_metadata(&dst) {
+            Err(err) if err.kind() == io::ErrorKind::NotFound => relocate(&src, &dst),
+            Ok(_) if real_dir(&src) && real_dir(&dst) => {
+                if stub_dir(&dst) && remove_stub(&dst).is_ok() {
+                    relocate(&src, &dst);
+                } else if real_dir(&dst) {
+                    merge_dirs(&src, &dst);
+                }
+            }
+            _ => {}
+        }
+    }
+    let _ = fs::remove_dir(from);
 }
 
 fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
@@ -143,10 +240,12 @@ fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-/// Moves Omaweb's directories to Qi. A move, not a copy, and only when the
-/// destination is not already there. Qt kept engine data in a nested folder
-/// named for the old organization (`…/omaweb/omaweb/QtWebEngine/omaweb`);
-/// that becomes `…/qi/qi/QtWebEngine/qi`.
+/// Moves Omaweb's directories to Qi. A move, not a copy. An empty destination
+/// is cleared so the old directory can take its place. A destination that
+/// already holds files keeps them and receives the rest; a file that would
+/// be overwritten stays in the old directory for a later launch. Qt kept
+/// engine data in a nested folder named for the old organization
+/// (`…/omaweb/omaweb/QtWebEngine/omaweb`); that becomes `…/qi/qi/QtWebEngine/qi`.
 pub fn migrate_legacy_dirs() {
     let config = xdg("XDG_CONFIG_HOME", ".config");
     let data = xdg("XDG_DATA_HOME", ".local/share");
@@ -160,8 +259,14 @@ pub fn migrate_legacy_dirs() {
         (cache.join("omaweb-cef"), cache.join("qi-cef")),
         (data.join("qi/omaweb"), data.join("qi/qi")),
         (cache.join("qi/omaweb"), cache.join("qi/qi")),
-        (data.join("qi/qi/QtWebEngine/omaweb"), data.join("qi/qi/QtWebEngine/qi")),
-        (cache.join("qi/qi/QtWebEngine/omaweb"), cache.join("qi/qi/QtWebEngine/qi")),
+        (
+            data.join("qi/qi/QtWebEngine/omaweb"),
+            data.join("qi/qi/QtWebEngine/qi"),
+        ),
+        (
+            cache.join("qi/qi/QtWebEngine/omaweb"),
+            cache.join("qi/qi/QtWebEngine/qi"),
+        ),
     ];
     if omaweb_running() {
         eprintln!("qi: Omaweb is still open, so its folders were left where they are");
@@ -174,5 +279,173 @@ pub fn migrate_legacy_dirs() {
     }
     for (from, to) in &pairs {
         move_if_absent(from, to);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn write(path: &Path, body: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn moves_the_tree_when_the_destination_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        write(&from.join("bookmarks.json"), "old");
+        write(&from.join("nested/a.txt"), "a");
+        move_if_absent(&from, &to);
+        assert!(!from.exists());
+        assert_eq!(
+            fs::read_to_string(to.join("bookmarks.json")).unwrap(),
+            "old"
+        );
+        assert_eq!(fs::read_to_string(to.join("nested/a.txt")).unwrap(), "a");
+    }
+
+    #[test]
+    fn replaces_an_empty_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        write(&from.join("bookmarks.json"), "old");
+        fs::create_dir_all(&to).unwrap();
+        move_if_absent(&from, &to);
+        assert!(!from.exists());
+        assert_eq!(
+            fs::read_to_string(to.join("bookmarks.json")).unwrap(),
+            "old"
+        );
+    }
+
+    #[test]
+    fn replaces_a_destination_of_only_empty_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        write(&from.join("bookmarks.json"), "old");
+        fs::create_dir_all(to.join("empty/deeper")).unwrap();
+        move_if_absent(&from, &to);
+        assert!(!from.exists());
+        assert_eq!(
+            fs::read_to_string(to.join("bookmarks.json")).unwrap(),
+            "old"
+        );
+        assert!(!to.join("empty").exists());
+    }
+
+    #[test]
+    fn merges_a_partial_destination_and_retries_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        write(&from.join("settings.toml"), "legacy");
+        write(&from.join("bookmarks.json"), "old-marks");
+        write(&from.join("keep/note.txt"), "note");
+        write(&to.join("settings.toml"), "qi-wrote-this");
+        move_if_absent(&from, &to);
+        assert_eq!(
+            fs::read_to_string(to.join("settings.toml")).unwrap(),
+            "qi-wrote-this"
+        );
+        assert_eq!(
+            fs::read_to_string(to.join("bookmarks.json")).unwrap(),
+            "old-marks"
+        );
+        assert_eq!(
+            fs::read_to_string(to.join("keep/note.txt")).unwrap(),
+            "note"
+        );
+        assert_eq!(
+            fs::read_to_string(from.join("settings.toml")).unwrap(),
+            "legacy"
+        );
+        assert!(!from.join("bookmarks.json").exists());
+        assert!(!from.join("keep").exists());
+
+        move_if_absent(&from, &to);
+        assert_eq!(
+            fs::read_to_string(to.join("settings.toml")).unwrap(),
+            "qi-wrote-this"
+        );
+        assert!(from.join("settings.toml").is_file());
+
+        fs::remove_file(to.join("settings.toml")).unwrap();
+        move_if_absent(&from, &to);
+        assert!(!from.exists());
+        assert_eq!(
+            fs::read_to_string(to.join("settings.toml")).unwrap(),
+            "legacy"
+        );
+    }
+
+    #[test]
+    fn merges_a_partial_child_and_replaces_a_stub_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        write(&from.join("sub/a.txt"), "legacy-a");
+        write(&from.join("sub/b.txt"), "legacy-b");
+        write(&from.join("stubbed/c.txt"), "legacy-c");
+        write(&to.join("sub/a.txt"), "qi-a");
+        fs::create_dir_all(to.join("stubbed/empty")).unwrap();
+        move_if_absent(&from, &to);
+        assert_eq!(fs::read_to_string(to.join("sub/a.txt")).unwrap(), "qi-a");
+        assert_eq!(
+            fs::read_to_string(to.join("sub/b.txt")).unwrap(),
+            "legacy-b"
+        );
+        assert_eq!(
+            fs::read_to_string(from.join("sub/a.txt")).unwrap(),
+            "legacy-a"
+        );
+        assert!(!from.join("sub/b.txt").exists());
+        assert_eq!(
+            fs::read_to_string(to.join("stubbed/c.txt")).unwrap(),
+            "legacy-c"
+        );
+        assert!(!to.join("stubbed/empty").exists());
+        assert!(!from.join("stubbed").exists());
+    }
+
+    #[test]
+    fn leaves_a_symlink_destination_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        let elsewhere = dir.path().join("elsewhere");
+        write(&from.join("secret.txt"), "legacy");
+        fs::create_dir_all(&elsewhere).unwrap();
+        symlink(&elsewhere, &to).unwrap();
+        move_if_absent(&from, &to);
+        assert_eq!(
+            fs::read_to_string(from.join("secret.txt")).unwrap(),
+            "legacy"
+        );
+        assert!(!elsewhere.join("secret.txt").exists());
+        assert!(fs::symlink_metadata(&to).unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    fn does_not_follow_a_symlink_inside_the_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        let elsewhere = dir.path().join("elsewhere");
+        write(&from.join("link/secret.txt"), "legacy");
+        fs::create_dir_all(&to).unwrap();
+        fs::create_dir_all(&elsewhere).unwrap();
+        symlink(&elsewhere, to.join("link")).unwrap();
+        move_if_absent(&from, &to);
+        assert_eq!(
+            fs::read_to_string(from.join("link/secret.txt")).unwrap(),
+            "legacy"
+        );
+        assert!(!elsewhere.join("secret.txt").exists());
     }
 }
