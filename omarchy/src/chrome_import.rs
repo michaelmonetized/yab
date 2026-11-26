@@ -8,7 +8,7 @@
 //! `secret-tool`. When that password can't be read, v11 values stay
 //! behind and the report says so. Nothing decrypted is written to disk:
 //! cookies go straight into the web engine's cookie store, passwords into
-//! the Secret Service under Omaweb's own entries.
+//! the Secret Service under Qi's own entries.
 
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
 use serde::Serialize;
@@ -383,11 +383,14 @@ mod tests {
 
     /// Against a real throwaway Chrome profile made with
     /// `google-chrome --user-data-dir=DIR --password-store=basic`, never a
-    /// real one: `OMAWEB_CHROME_TEST_PROFILE=DIR/Default cargo test -- --ignored`.
+    /// real one: `QI_CHROME_TEST_PROFILE=DIR/Default cargo test -- --ignored`.
+    /// `OMAWEB_CHROME_TEST_PROFILE` is accepted too.
     #[test]
     #[ignore]
     fn real_throwaway_chrome_profile() {
-        let Ok(dir) = std::env::var("OMAWEB_CHROME_TEST_PROFILE") else { return };
+        let Ok(dir) = std::env::var("QI_CHROME_TEST_PROFILE")
+            .or_else(|_| std::env::var("OMAWEB_CHROME_TEST_PROFILE"))
+        else { return };
         let p = Path::new(&dir);
         let visits = read_history(p, 1000).unwrap();
         assert!(!visits.is_empty(), "history");

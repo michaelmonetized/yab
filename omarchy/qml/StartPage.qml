@@ -30,7 +30,7 @@ Rectangle {
         }
         Text {
             Layout.alignment: Qt.AlignHCenter
-            text: page.isPrivate ? "private tab — nothing is kept" : (page.pal.name.length ? page.pal.name : "omaweb")
+            text: page.isPrivate ? "private tab — nothing is kept" : (page.pal.name.length ? page.pal.name : "qi")
             color: page.isPrivate ? page.pal.accent : page.pal.fgDark
             font.family: page.pal.font
             font.pixelSize: page.pal.fontSize

@@ -10,7 +10,7 @@
 #include <QtWebEngineCore/QWebEngineUrlRequestInfo>
 #include <QtWebEngineQuick/QQuickWebEngineProfile>
 
-namespace omaweb {
+namespace qi {
 
 static bool hostListed(const QSet<QString>& set, QStringView host)
 {
@@ -185,4 +185,4 @@ void WebTools::addCookie(const QString& profile, const QString& name, const QStr
     p->cookieStore()->setCookie(c, origin);
 }
 
-} // namespace omaweb
+} // namespace qi

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Qi (CEF)
+GenericName=Web Browser
+Comment=Qi on Chromium, with Chrome extensions and your real Chrome profiles
+Exec=qi-cef %U
+Icon=qi
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=qi-cef

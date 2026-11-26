@@ -15,7 +15,7 @@ fn main() {
         "qml/Settings.qml",
         "qml/Widgets.qml",
     ];
-    let mut module = QmlModule::new("app.omaweb");
+    let mut module = QmlModule::new("app.qi");
     for f in qml {
         module = module.qml_file(f);
     }

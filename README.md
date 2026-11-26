@@ -1,7 +1,7 @@
-# Yab → Omaweb, for Omarchy
+# Yab → Qi, for Omarchy
 
 This fork rewrites Yab's desktop browser for Linux and [Omarchy](https://omarchy.org):
-**[Omaweb](omarchy/)**, a keyboard-first, Hyprland-native browser with a Rust
+**[Qi](omarchy/)**, a keyboard-first, Hyprland-native browser with a Rust
 core, Qt Quick chrome and Qt WebEngine pages, coloured live by the active
 Omarchy theme. It has Yab's sidebar (favorites, Spaces with theme
 colours, folders, pinned and today's tabs, auto-archive), Chrome-style
@@ -9,16 +9,19 @@ profiles with a Chrome/Chromium importer, an agent panel for any
 OpenAI-compatible model, split view, Peek, reading mode, built-in ad and
 tracker blocking, bookmarks, a settings screen and Chrome Web Store
 installs. Qt WebEngine only runs a small part of the Chrome extension API,
-so most real extensions install but don't work; the
-[README](omarchy/README.md#extensions) has the tested list and the CEF
-alternative.
+so most real extensions install but don't work on that build. **Qi (CEF)**
+(`omarchy/cef/`, launcher `qi-cef`) runs real Chrome extensions, LastPass
+included, and opens your actual Chrome profiles. The
+[README](omarchy/README.md#extensions) has the tested list and the
+[roadmap](omarchy/docs/cef-roadmap.md).
 
-![Omaweb: frameless, the sidebar pinned with favorites, a folder and two spaces, the agent panel on the right](omarchy/docs/page.png)
+![Qi: frameless, the sidebar pinned with favorites, a folder and two spaces, the agent panel on the right](omarchy/docs/page.png)
 
 - Build, keys, Omarchy integration and why this stack: [omarchy/README.md](omarchy/README.md)
-- Quick start on Omarchy: `sudo pacman -S --needed rust qt6-base qt6-declarative qt6-webengine qt6-wayland && cd omarchy && make install && omaweb`
+- Quick start on Omarchy (Qt is already installed; do not reinstall `qt6-webengine`, pacman downgrades it): `cd omarchy && make install && qi`
+- Chrome extensions and real Chrome profiles: `cd omarchy/cef && ./fetch-cef.sh`, then the cmake build in [omarchy/README.md](omarchy/README.md#qi-cef), then `make install-cef && qi-cef`
 
-Omaweb is a derived work of Yab by Serafim Korablev (Apache-2.0). It has
+Qi is a derived work of Yab by Serafim Korablev (Apache-2.0). It has
 its own name and icon, as Yab's [trademark policy](TRADEMARKS.md) asks of
 forks. The original macOS app, iPhone and Android companions below are
 upstream's and are left as they are.

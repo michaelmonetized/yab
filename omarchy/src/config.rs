@@ -1,4 +1,4 @@
-//! `~/.config/omaweb/config.toml`. Every key is optional.
+//! `~/.config/qi/config.toml`. Every key is optional.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -37,7 +37,7 @@ pub struct Config {
     pub peek: bool,
     /// Darken pages that have no dark style of their own.
     pub force_dark: bool,
-    /// Profile new spaces use, and the one `omaweb` opens without `--profile`.
+    /// Profile new spaces use, and the one `qi` opens without `--profile`.
     pub default_profile: String,
     pub blocker: BlockerConfig,
     pub agent: AgentConfig,
@@ -96,7 +96,7 @@ impl Default for AgentConfig {
         AgentConfig {
             endpoint: "https://api.openai.com/v1".into(),
             model: "gpt-4o-mini".into(),
-            api_key_env: "OMAWEB_AGENT_API_KEY".into(),
+            api_key_env: "QI_AGENT_API_KEY".into(),
             api_key_command: String::new(),
             api_key: String::new(),
             max_page_chars: 12_000,
@@ -170,7 +170,7 @@ impl Config {
                 c
             }
             Err(e) => {
-                eprintln!("omaweb: ignoring {}: {e}", path.display());
+                eprintln!("qi: ignoring {}: {e}", path.display());
                 Config::default()
             }
         }
@@ -277,14 +277,14 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.archive_after_hours, 12.0);
         assert!(c.blocker.enabled);
-        assert_eq!(c.agent.api_key_env, "OMAWEB_AGENT_API_KEY");
+        assert_eq!(c.agent.api_key_env, "QI_AGENT_API_KEY");
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("config.toml");
         fs::write(&p, "archive_after_hours = -3\n[agent]\nmodel = \"llama3\"\nendpoint = \"http://localhost:11434/v1\"\n[blocker]\nenabled = false\n").unwrap();
         let c = Config::load(&p);
         assert_eq!(c.archive_after_hours, 12.0);
         assert_eq!(c.agent.model, "llama3");
-        assert_eq!(c.agent.api_key_env, "OMAWEB_AGENT_API_KEY");
+        assert_eq!(c.agent.api_key_env, "QI_AGENT_API_KEY");
         assert!(!c.blocker.enabled);
     }
 
@@ -320,7 +320,7 @@ mod tests {
         let text = std::fs::read_to_string(&p).unwrap();
         let _: toml::Value = toml::from_str(&text).expect("config.example.toml is valid TOML");
         let c = Config::load(&p);
-        assert_eq!(c.agent.api_key_env, "OMAWEB_AGENT_API_KEY");
+        assert_eq!(c.agent.api_key_env, "QI_AGENT_API_KEY");
         assert!(c.blocker.enabled);
         assert_eq!(c.archive_after_hours, 12.0);
         assert!(c.agent.api_key.is_empty(), "the example never carries a key");

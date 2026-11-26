@@ -4,7 +4,7 @@
 //! QML keeps one `Workspace` as JSON and every structural change goes
 //! through [`apply`], so the rules live here and are tested here. QML only
 //! writes the fields that follow a live page: url, title, last_active.
-//! Saved to `~/.local/state/omaweb/workspace.json`; private tabs never are.
+//! Saved to `~/.local/state/qi/workspace.json`; private tabs never are.
 
 use crate::session::Session;
 use serde::{Deserialize, Serialize};

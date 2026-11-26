@@ -1,5 +1,5 @@
 //! "Hide something": elements you picked on a site stay hidden there, as
-//! CSS selectors per host in `~/.local/share/omaweb/hidden.json`.
+//! CSS selectors per host in `~/.local/share/qi/hidden.json`.
 
 use std::collections::BTreeMap;
 use std::fs;

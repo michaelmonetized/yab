@@ -1,4 +1,4 @@
-// Omaweb's window. QML draws; Rust (the Browser object) decides.
+// Qi's window. QML draws; Rust (the Browser object) decides.
 //
 // The sidebar's shape (spaces, folders, favorites, pinned and today tabs,
 // the archive) is one workspace object `ws`; every structural change goes
@@ -9,8 +9,8 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Window
 import QtWebEngine
-import app.omaweb
-import app.omaweb.native
+import app.qi
+import app.qi.native
 
 ApplicationWindow {
     id: win
@@ -19,7 +19,7 @@ ApplicationWindow {
     visible: true
     color: pal.bg
     flags: frameless ? (Qt.Window | Qt.FramelessWindowHint) : Qt.Window
-    title: (currentTab && currentTab.title ? currentTab.title + " — " : "") + "Omaweb"
+    title: (currentTab && currentTab.title ? currentTab.title + " — " : "") + "Qi"
 
     // ---- Rust core -------------------------------------------------------
     Browser {
@@ -48,7 +48,7 @@ ApplicationWindow {
     readonly property bool chromeShown: !compact || chromePeek
     // A secret only our own isolated-world scripts know: page scripts can't
     // fake the console messages that carry it.
-    readonly property string token: "\u0001omaweb" + Math.floor(Math.random() * 1e12).toString(36) + Date.now().toString(36) + ":"
+    readonly property string token: "\u0001qi" + Math.floor(Math.random() * 1e12).toString(36) + Date.now().toString(36) + ":"
 
     // ---- Omarchy palette, live --------------------------------------------
     QtObject {
@@ -87,7 +87,7 @@ ApplicationWindow {
     }
 
     // ---- Profiles ----------------------------------------------------------
-    // One persistent web engine profile per Omaweb profile (cookies, storage,
+    // One persistent web engine profile per Qi profile (cookies, storage,
     // cache, extensions), made when first needed; one shared private one.
     Component { id: profileProto; WebEngineProfilePrototype {} }
     WebEngineProfilePrototype { id: privateProto }
@@ -103,7 +103,7 @@ ApplicationWindow {
         if (name === "private") return privateProfile
         if (engineProfiles[name]) return engineProfiles[name]
         let info = infoOf(name)
-        if (!info) { browser.addProfile(name); info = infoOf(name) || { name: name, storage_name: "omaweb", storage_path: "", cache_path: "" } }
+        if (!info) { browser.addProfile(name); info = infoOf(name) || { name: name, storage_name: "qi", storage_path: "", cache_path: "" } }
         const props = {
             storageName: info.storage_name,
             httpCacheType: WebEngineProfile.DiskHttpCache,
@@ -136,7 +136,7 @@ ApplicationWindow {
     }
     function installUserScripts(p) {
         const s = WebEngine.script()
-        s.name = "omaweb-login-capture"
+        s.name = "qi-login-capture"
         s.injectionPoint = WebEngineScript.DocumentReady
         s.worldId = WebEngineScript.ApplicationWorld
         s.runsOnSubframes = false
@@ -621,7 +621,7 @@ ApplicationWindow {
     function afterLoad(t) {
         const css = browser.hideCss(t.host)
         if (css.length)
-            t.view.runJavaScript("(function(){var s=document.getElementById('omaweb-hide')||document.createElement('style');s.id='omaweb-hide';s.textContent=" + JSON.stringify(css) + ";(document.head||document.documentElement).appendChild(s);})()", WebEngineScript.ApplicationWorld)
+            t.view.runJavaScript("(function(){var s=document.getElementById('qi-hide')||document.createElement('style');s.id='qi-hide';s.textContent=" + JSON.stringify(css) + ";(document.head||document.documentElement).appendChild(s);})()", WebEngineScript.ApplicationWorld)
         if (t.uid === currentUid) { loginBar.check(t); storeButton.check() }
         agentPanel.pageLoaded(t)
         watcher.pageLoaded(t)
@@ -770,7 +770,7 @@ ApplicationWindow {
             const said = text.replace(/^(NOT )?MET:\s*/i, "")
             win.op({ op: "update_watch", id: wid, now: win.nowSecs(), result: said, done: met })
             if (met) {
-                browser.notify("Omaweb: " + w.condition, said)
+                browser.notify("Qi: " + w.condition, said)
                 agentPanel.addNote("\ud83d\udc41 " + w.condition + " — " + said)
             }
         }
@@ -815,13 +815,13 @@ ApplicationWindow {
     function pickToHide() {
         if (!currentTab || currentTab.blank) return
         status.show("Click what to hide · Esc to stop")
-        currentTab.view.runJavaScript("(function(T){if(window.__omawebPick)return;window.__omawebPick=1;var box=document.createElement('div');" +
+        currentTab.view.runJavaScript("(function(T){if(window.__qiPick)return;window.__qiPick=1;var box=document.createElement('div');" +
             "box.style.cssText='position:fixed;pointer-events:none;z-index:2147483647;border:2px solid " + pal.accent + ";background:rgba(122,162,247,.15);border-radius:3px';document.documentElement.appendChild(box);var cur=null;" +
             "function sel(e){if(e.id&&!/\\d{3,}/.test(e.id))return '#'+CSS.escape(e.id);var p=[];while(e&&e.nodeType===1&&e!==document.body&&p.length<5){var s=e.tagName.toLowerCase();" +
             "var cl=Array.prototype.filter.call(e.classList,function(c){return !/\\d{3,}|^(is|has)-/.test(c)}).slice(0,2);if(cl.length)s+='.'+cl.map(CSS.escape).join('.');" +
             "var par=e.parentElement;if(par&&!cl.length){var same=Array.prototype.filter.call(par.children,function(c){return c.tagName===e.tagName});if(same.length>1)s+=':nth-of-type('+(same.indexOf(e)+1)+')';}p.unshift(s);if(e.id)break;e=par;}return p.join(' > ');}" +
             "function mv(ev){cur=ev.target;var r=cur.getBoundingClientRect();box.style.left=r.left+'px';box.style.top=r.top+'px';box.style.width=r.width+'px';box.style.height=r.height+'px';}" +
-            "function end(){document.removeEventListener('mousemove',mv,true);document.removeEventListener('click',ck,true);document.removeEventListener('keydown',kd,true);box.remove();window.__omawebPick=0;}" +
+            "function end(){document.removeEventListener('mousemove',mv,true);document.removeEventListener('click',ck,true);document.removeEventListener('keydown',kd,true);box.remove();window.__qiPick=0;}" +
             "function ck(ev){ev.preventDefault();ev.stopPropagation();var s=sel(cur);end();console.log(T+'hide:'+s);}" +
             "function kd(ev){if(ev.key==='Escape'){end();}}" +
             "document.addEventListener('mousemove',mv,true);document.addEventListener('click',ck,true);document.addEventListener('keydown',kd,true);})(" + JSON.stringify(token) + ")",
@@ -1085,7 +1085,7 @@ ApplicationWindow {
             }
         }
 
-        // "Add to Omaweb" on Chrome Web Store pages.
+        // "Add to Qi" on Chrome Web Store pages.
         Rectangle {
             id: storeButton
             z: 26
@@ -1103,7 +1103,7 @@ ApplicationWindow {
             height: 34
             radius: 17
             color: storeMouse.containsMouse ? pal.fgBright : pal.accent
-            Text { id: storeText; anchors.centerIn: parent; text: "Add to Omaweb (" + win.profileOfCurrent() + ")"; color: pal.onAccent; font.family: pal.font; font.bold: true }
+            Text { id: storeText; anchors.centerIn: parent; text: "Add to Qi (" + win.profileOfCurrent() + ")"; color: pal.onAccent; font.family: pal.font; font.bold: true }
             MouseArea { id: storeMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.installExtension(win.profileOfCurrent(), storeButton.extId) }
         }
 

@@ -1,4 +1,4 @@
-//! Omaweb: a Rust + Qt Quick rewrite of Yab for Omarchy.
+//! Qi: a Rust + Qt Quick rewrite of Yab for Omarchy.
 
 mod agent;
 mod blocker;
@@ -20,12 +20,12 @@ mod workspace;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 
-const HELP: &str = "omaweb [URL|SEARCH]...
+const HELP: &str = "qi [URL|SEARCH]...
 
 A keyboard-first browser for Omarchy. With a window already open, the
 URLs open as tabs there.
 
-  --theme     print the Omarchy theme Omaweb would use, then exit
+  --theme     print the Omarchy theme Qi would use, then exit
   --private   open the URLs (or a blank tab) as private tabs
               (--incognito and --private-window work too)
   --profile NAME
@@ -36,6 +36,7 @@ URLs open as tabs there.
   -h, --help  this text";
 
 fn main() {
+    paths::migrate_legacy_dirs();
     let mut urls = Vec::new();
     let mut separate = false;
     let mut private = false;
@@ -52,7 +53,7 @@ fn main() {
                 return;
             }
             "--version" => {
-                println!("omaweb {}", env!("CARGO_PKG_VERSION"));
+                println!("qi {}", env!("CARGO_PKG_VERSION"));
                 return;
             }
             "--theme" => {
@@ -91,18 +92,18 @@ fn main() {
     }
 
     bridge::qobject::init_webengine();
-    bridge::qobject::set_desktop_file_name(&QString::from("omaweb"));
+    bridge::qobject::set_desktop_file_name(&QString::from("qi"));
 
     let mut app = QGuiApplication::new();
     if let Some(mut app) = app.as_mut() {
-        app.as_mut().set_application_name(&QString::from("omaweb"));
-        app.as_mut().set_application_display_name(&QString::from("Omaweb"));
+        app.as_mut().set_application_name(&QString::from("qi"));
+        app.as_mut().set_application_display_name(&QString::from("Qi"));
         app.as_mut().set_application_version(&QString::from(env!("CARGO_PKG_VERSION")));
-        app.as_mut().set_organization_name(&QString::from("omaweb"));
+        app.as_mut().set_organization_name(&QString::from("qi"));
     }
     let mut engine = QQmlApplicationEngine::new();
     if let Some(engine) = engine.as_mut() {
-        engine.load(&QUrl::from("qrc:/qt/qml/app/omaweb/qml/Main.qml"));
+        engine.load(&QUrl::from("qrc:/qt/qml/app/qi/qml/Main.qml"));
     }
     let code = app.as_mut().map(|a| a.exec()).unwrap_or(1);
     bridge::shutdown();

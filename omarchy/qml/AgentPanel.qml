@@ -156,7 +156,7 @@ Rectangle {
                 wrapMode: Text.WordWrap
                 color: panel.pal.fg
                 font.family: panel.pal.font
-                text: "Not set up yet. Put your API key in the " + (panel.status.envVar || "OMAWEB_AGENT_API_KEY") +
+                text: "Not set up yet. Put your API key in the " + (panel.status.envVar || "QI_AGENT_API_KEY") +
                       " environment variable (or set agent.api_key_command in config.toml), or point agent.endpoint at a local OpenAI-compatible server. Endpoint: " + (panel.status.endpoint || "")
             }
         }

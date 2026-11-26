@@ -1,5 +1,5 @@
 //! Browsing history, kept on this machine only, as a JSON-lines log in
-//! `~/.local/share/omaweb/history.jsonl`. It feeds address completion and
+//! `~/.local/share/qi/history.jsonl`. It feeds address completion and
 //! the start page.
 
 use serde::{Deserialize, Serialize};

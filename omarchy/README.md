@@ -1,10 +1,10 @@
-# Omaweb
+# Qi
 
 A keyboard-first browser for [Omarchy](https://omarchy.org): Rust core, Qt Quick
 chrome, Chromium pages through Qt WebEngine, and the active Omarchy theme
 everywhere, live.
 
-Omaweb is a Linux rewrite of [Yab](https://github.com/yetanotherbrowser/yab)
+Qi is a Linux rewrite of [Yab](https://github.com/yetanotherbrowser/yab)
 ("yet another browser", a native macOS browser by Serafim Korablev). It keeps
 Yab's look and idea, nothing in the way: no frame, no title bar, no
 toolbar, just the page, edge to edge. Tabs live in a Yab-style sidebar
@@ -15,7 +15,7 @@ and searches go through one field that appears on demand as a palette
 (Ctrl+L, Ctrl+T) and is gone again once you press Return. It does not reuse
 Yab's Swift code, names or icons.
 
-![Omaweb with the sidebar pinned (favorites, the Reading folder, pinned and today's tabs, two spaces in the footer) and the agent panel open](docs/page.png)
+![Qi with the sidebar pinned (favorites, the Reading folder, pinned and today's tabs, two spaces in the footer) and the agent panel open](docs/page.png)
 ![Split view: two tabs side by side](docs/split.png)
 ![Peek: a link opened in a card over the page](docs/peek.png)
 ![Settings → Extensions with uBlock Origin Lite, Dark Reader and Bitwarden installed from the Chrome Web Store](docs/settings-extensions.png)
@@ -24,12 +24,12 @@ Yab's Swift code, names or icons.
 ## Why this stack
 
 - **Qt Quick (QML), the toolkit Quickshell is built on.** Omarchy's shell
-  and most Hyprland bars are QML, so Omaweb looks and behaves like part of
+  and most Hyprland bars are QML, so Qi looks and behaves like part of
   the desktop, not a GTK or Electron guest. Quickshell itself is a runtime
   for desktop-shell configs (bars, panels, launchers), not for
   applications: it can load a `WebEngineView` behind a pragma, but only in
   a WebEngine-enabled build, and current releases crash Qt WebEngine on
-  start (it builds `QGuiApplication` with `argc = 0`). So Omaweb is a
+  start (it builds `QGuiApplication` with `argc = 0`). So Qi is a
   standalone Qt Quick app with the same QML idiom and its own process.
 - **Rust core via [cxx-qt](https://github.com/KDAB/cxx-qt).** Theme
   parsing and watching, the address field's logic, history, the workspace
@@ -60,23 +60,23 @@ Yab's Swift code, names or icons.
   `prefers-color-scheme`; open pages pick it up on reload.
 - **The Omarchy font.** The fontconfig monospace family that
   `omarchy-font-set` writes, else your Alacritty or Ghostty font.
-- **Hyprland-native.** Wayland first, app_id `omaweb`, a frameless
+- **Hyprland-native.** Wayland first, app_id `qi`, a frameless
   window with no client-side decorations, title bar, shadows or margins,
   so it tiles edge to edge and Hyprland's border is the only frame. Super stays
-  Hyprland's: every Omaweb shortcut uses Ctrl or Alt.
-- **One instance.** `omaweb <url>` from a terminal, a bind or `xdg-open`
+  Hyprland's: every Qi shortcut uses Ctrl or Alt.
+- **One instance.** `qi <url>` from a terminal, a bind or `xdg-open`
   opens a tab in the running window (a Unix socket in `$XDG_RUNTIME_DIR`).
-- **Omarchy's browser binds.** Make Omaweb the default browser
+- **Omarchy's browser binds.** Make Qi the default browser
   (`make default-browser`) and Omarchy's browser key opens it; `--private`,
   `--incognito` and `--private-window` all open a private tab, so the
   private-browser bind works too.
 - **Mako notifications** for finished and failed downloads, through
   `notify-send`.
-- **XDG paths.** Config `~/.config/omaweb/config.toml`
+- **XDG paths.** Config `~/.config/qi/config.toml`
   ([example](config.example.toml)); profiles, history, bookmarks,
-  extensions and hidden elements in `~/.local/share/omaweb`; the workspace
+  extensions and hidden elements in `~/.local/share/qi`; the workspace
   (spaces, folders, tabs, archive, watches) in
-  `~/.local/state/omaweb/workspace.json`; filter lists in `~/.cache/omaweb`.
+  `~/.local/state/qi/workspace.json`; filter lists in `~/.cache/qi`.
 
 ## What works
 
@@ -117,14 +117,14 @@ Yab's Swift code, names or icons.
 - **Ad and tracker blocking** inside the engine (a
   `QWebEngineUrlRequestInterceptor`), before requests are made, from host
   lists and the `||domain^` rules of adblock lists (`[blocker] lists`,
-  refreshed weekly into `~/.cache/omaweb`), plus a built-in list. Per-site
+  refreshed weekly into `~/.cache/qi`), plus a built-in list. Per-site
   allow list and blocked counts in site controls (Ctrl+E).
 - **Hide something** (Ctrl+Shift+H): click any element and it stays
   hidden on that site; site controls bring it back.
 - **Reading mode** (Ctrl+Alt+R): the article alone, in the theme's colours.
-- **Passwords in your keyring.** Omaweb offers to save a password when you
+- **Passwords in your keyring.** Qi offers to save a password when you
   sign in and fills it (Ctrl+Alt+L). Passwords live only in the Secret
-  Service (`secret-tool`, so GNOME Keyring or KWallet); Omaweb's files only
+  Service (`secret-tool`, so GNOME Keyring or KWallet); Qi's files only
   hold which sites have one.
 - **Dark pages** (`force_dark = true`), lazy tabs (restored tabs cost
   nothing until shown), find in page, zoom, full screen, view source,
@@ -137,13 +137,13 @@ Each profile is a separate persistent Qt WebEngine profile: its own
 cookies, local storage, cache, history, bookmarks, saved-password index and
 extensions.
 
-- `Default` keeps the original storage (`~/.local/share/omaweb/omaweb/QtWebEngine/omaweb`),
+- `Default` keeps the original storage (`~/.local/share/qi/qi/QtWebEngine/qi`),
   so existing sign-ins survive the upgrade. Others live in
-  `~/.local/share/omaweb/profiles/<name>/` (cache in `~/.cache/omaweb/profiles/<name>`).
+  `~/.local/share/qi/profiles/<name>/` (cache in `~/.cache/qi/profiles/<name>`).
 - Add, remove and pick the default in Settings → Spaces & profiles; bind
   any space to a profile there or from the space's menu.
-- `omaweb --profile Work https://…` opens in the space bound to `Work`
-  (creating the profile and a space for it if needed), also when Omaweb is
+- `qi --profile Work https://…` opens in the space bound to `Work`
+  (creating the profile and a space for it if needed), also when Qi is
   already running. `--profile-directory` is accepted for Chrome-style
   launchers.
 
@@ -151,29 +151,29 @@ extensions.
 (stable, beta, dev), Chromium, Brave, Edge and Vivaldi profiles in
 `~/.config` by the names in their `Local State`, or any profile folder you
 point it at (for Chrome run with `--user-data-dir`), and imports into the
-Omaweb profile you choose:
+Qi profile you choose:
 
 | What | How | Can't come across |
 | --- | --- | --- |
 | Bookmarks | `Bookmarks` JSON, folders kept under "Imported (…)" | — |
 | History | `History` SQLite | visit-by-visit detail beyond counts and last visit |
 | Cookies (stay signed in) | `Cookies` SQLite, decrypted (AES-128-CBC, v10 with Chrome's built-in key, v11 with the keyring password read by `secret-tool`), written straight into the web engine's cookie store | v11 cookies when the keyring can't be read; app-bound or device-bound session cookies |
-| Passwords | `Login Data`, decrypted the same way, saved into the Secret Service under Omaweb's entries | everything when `secret-tool` isn't installed (they are decrypted in memory, then dropped, and the report says so) |
+| Passwords | `Login Data`, decrypted the same way, saved into the Secret Service under Qi's entries | everything when `secret-tool` isn't installed (they are decrypted in memory, then dropped, and the report says so) |
 | Extensions | copied from `Extensions/<id>/<version>` and installed into the profile | see Extensions below for what runs |
 
 Open tabs, payment cards, autofill addresses, site settings and Chrome
 sync never come across. Databases are copied to a temporary directory
 before reading, so Chrome may stay open, but close it for a consistent
-snapshot. Nothing decrypted is written to Omaweb's files.
+snapshot. Nothing decrypted is written to Qi's files.
 
 ## Extensions
 
-Omaweb uses Qt WebEngine's extension support (Qt 6.10+,
+Qi uses Qt WebEngine's extension support (Qt 6.10+,
 `QWebEngineExtensionManager`), per profile:
 
-- Install from the **Chrome Web Store**: an "Add to Omaweb" button appears
+- Install from the **Chrome Web Store**: an "Add to Qi" button appears
   on store pages, or paste a store link or id in Settings → Extensions.
-  Omaweb downloads the CRX for Chromium 140 (Qt 6.11's), unpacks it, keeps
+  Qi downloads the CRX for Chromium 140 (Qt 6.11's), unpacks it, keeps
   its signing key so the extension has its store id, and installs it.
 - Load an **unpacked** folder (remembered across restarts) or install a
   **.crx / .zip** file.
@@ -196,20 +196,35 @@ blocking `webRequest`, native messaging, or a toolbar-click (action
 `onClicked`) path an embedder can drive. Almost every real extension
 touches these on start, so **Chrome extension parity is not
 possible on Qt WebEngine today**; simple content-script extensions are the
-ceiling. Omaweb's own blocker, passwords and hide-element cover the most
-common reasons people install extensions.
+ceiling. Qi's own blocker, passwords and hide-element cover the most
+common reasons people install extensions on this build.
 
-**The alternative** is to embed full Chromium through
-[CEF](https://bitbucket.org/chromiumembedded/cef) with its Chrome runtime
-(the route upstream Yab takes on macOS), which brings the real extension
-system, the Web Store and Chrome's profile format. For Omaweb that means:
-a CEF build for Linux (x86_64 and aarch64), rendering CEF's off-screen or
-child-window output into the Qt Quick scene (or replacing Qt Quick with a
-thin native shell), re-plumbing tabs, profiles, downloads, permissions,
-find, DevTools and the request blocker onto CEF's handlers, and shipping a
-~250 MB runtime. Estimate: **6–10 weeks** of focused work for one person to
-reach today's feature set on CEF, plus ongoing Chromium updates (CEF
-follows Chrome's 4-week releases).
+### Qi (CEF)
+
+Qi (CEF) is the other build. It is a CEF Views window on the Chrome
+runtime with Chrome-style browsers, so the real extension system is there:
+`chrome.tabs`, action popups, the Web Store, native messaging lookups.
+It opens your actual Chromium, Chrome or Brave profile (cookies, logins,
+extensions), after a backup, and refuses to start when that browser still
+holds the profile lock. LastPass's toolbar icon and popup work. The Qt
+window and this one stay separate: embedding a CEF browser inside Qt on
+Wayland is unsupported upstream. What is still missing (sidebar, split,
+agent, and the rest) is [docs/cef-roadmap.md](docs/cef-roadmap.md).
+
+From `omarchy/`:
+
+```bash
+cd cef && ./fetch-cef.sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)"
+cd .. && make install-cef          # ~/.local/bin/qi-cef, launcher "Qi (CEF)"
+qi-cef                             # or: qi-cef --list-profiles
+```
+
+Shells started from an AppImage should unset `LD_LIBRARY_PATH`, `APPDIR`,
+`APPIMAGE` and `OWD` first. The `qi-cef` wrapper does that. Keep the CEF
+milestone equal to the Chromium you already run, or the next Chromium
+start will see a profile upgrade. Nothing here is published to the AUR.
 
 ## Agent
 
@@ -231,12 +246,12 @@ llama.cpp / LM Studio (local endpoints need no key).
 [agent]
 endpoint = "https://api.openai.com/v1"
 model = "gpt-4o-mini"
-api_key_env = "OMAWEB_AGENT_API_KEY"   # read from the environment
+api_key_env = "QI_AGENT_API_KEY"   # read from the environment
 # api_key_command = "secret-tool lookup service openai"
 ```
 
 The key comes from the environment variable named by `api_key_env`
-(default `OMAWEB_AGENT_API_KEY`, then `OPENAI_API_KEY`), else from
+(default `QI_AGENT_API_KEY`, then `OPENAI_API_KEY`), else from
 `api_key_command`'s output, else `agent.api_key` in your config. The
 settings screen never asks for or writes the key.
 
@@ -288,12 +303,18 @@ Shift+click a link (or any pop-up) to Peek at it.
 
 On Omarchy / Arch:
 
+Omarchy already ships Rust and Qt 6. Leave `qt6-webengine` alone: installing
+it again downgrades the package.
+
 ```bash
-sudo pacman -S --needed rust qt6-base qt6-declarative qt6-webengine qt6-wayland
 cd omarchy
-make install           # builds release, installs to ~/.local
-omaweb                 # or: make default-browser
+make install           # builds release, installs qi to ~/.local
+qi                     # or: make default-browser
 ```
+
+`make install` also leaves `omaweb` as a symlink to `qi` and removes the
+old Omaweb launcher. If Omaweb was the default browser, the default becomes
+Qi. The CEF build is separate: [Qi (CEF)](#qi-cef) above, `make install-cef`.
 
 Optional: [`data/hyprland.conf`](data/hyprland.conf) has a bind and a window
 rule to copy into your Hyprland config; pick a key Omarchy isn't using.
@@ -301,32 +322,34 @@ rule to copy into your Hyprland config; pick a key Omarchy isn't using.
 cxx-qt finds Qt through `qmake6`/`qmake` on `PATH`, or `QMAKE=/path/to/qmake`.
 `cargo test` runs the Rust tests (theme, address field, history, session,
 config, workspace, bookmarks, blocker, agent, extensions, Chrome import,
-passwords, profiles). `OMAWEB_CHROME_TEST_PROFILE=/tmp/x/Default cargo test -- --ignored`
-also runs the importer against a throwaway Chrome profile. `omaweb --theme` prints the palette it would use.
+passwords, profiles). `QI_CHROME_TEST_PROFILE=/tmp/x/Default cargo test -- --ignored`
+also runs the importer against a throwaway Chrome profile. `qi --theme` prints the palette it would use.
 
-Environment overrides: `OMAWEB_THEME_DIR` (read a theme dir directly),
-`OMAWEB_FONT`. Omaweb sets `QT_WAYLAND_DISABLE_WINDOWDECORATION=1`,
+Environment overrides: `QI_THEME_DIR` (read a theme dir directly),
+`QI_FONT`. The old `OMAWEB_THEME_DIR`, `OMAWEB_FONT` and
+`OMAWEB_AGENT_API_KEY` still work. Qi sets `QT_WAYLAND_DISABLE_WINDOWDECORATION=1`,
 `QT_QPA_PLATFORMTHEME=gtk3` and the Basic Quick Controls style unless you
 set them yourself.
 
 ## Not here yet
 
-- **Chrome extensions that use `chrome.tabs` and friends**, which is most of
-  them; see Extensions for what Qt WebEngine can't do and the CEF route.
+- **Chrome extensions on the Qt build.** Qi (CEF) runs them. The sidebar,
+  Spaces and the agent are not on that build yet; see
+  [docs/cef-roadmap.md](docs/cef-roadmap.md).
 - Yab's floating video (picture-in-picture: Qt WebEngine has no PiP),
   end-to-end encrypted sync, agents in their own tabs with your sign-ins
-  (Omaweb's agent is a side panel acting on the current tab), and Yab's
+  (Qi's agent is a side panel acting on the current tab), and Yab's
   iPhone and Android companions (still in the upstream tree, untouched).
 - Hooking into third-party password managers (1Password, Bitwarden apps);
-  Omaweb uses the Secret Service.
+  Qi uses the Secret Service.
 - Packaging. Nothing is published to the AUR.
 
 ## Credit and license
 
-Omaweb is derived from Yab, © 2026 Serafim Korablev, Apache License 2.0
+Qi is derived from Yab, © 2026 Serafim Korablev, Apache License 2.0
 (itself a fork of Search by Office Commun, MIT). "Yab", "Yet Another
 Browser" and Yab's icons are Serafim Korablev's trademarks and are not used
-for this app; see [TRADEMARKS.md](../TRADEMARKS.md). Omaweb's own code is
+for this app; see [TRADEMARKS.md](../TRADEMARKS.md). Qi's own code is
 under the same Apache License 2.0 ([LICENSE](../LICENSE), [NOTICE](../NOTICE)).
 Built with Qt (LGPLv3), Qt WebEngine / Chromium, cxx-qt (MIT or Apache-2.0)
 and the crates in `Cargo.lock`.
