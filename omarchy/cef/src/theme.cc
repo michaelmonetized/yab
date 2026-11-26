@@ -1,5 +1,6 @@
 // Reads the active Omarchy theme's colors.toml, like src/theme.rs does.
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <sstream>
 
@@ -45,7 +46,19 @@ Theme Load() {
       std::string k = line.substr(0, eq), v = line.substr(eq + 1);
       k.erase(0, k.find_first_not_of(" \t"));
       k.erase(k.find_last_not_of(" \t") + 1);
-      kv[k] = v;
+      std::string value;
+      bool quoted = false;
+      for (char c : v) {
+        if (c == '"' || c == '\'') {
+          quoted = !quoted;
+          continue;
+        }
+        if (!quoted && c == '#') break;
+        value += c;
+      }
+      auto a = value.find_first_not_of(" \t");
+      auto b = value.find_last_not_of(" \t\r");
+      kv[k] = a == std::string::npos ? "" : value.substr(a, b - a + 1);
     }
     ParseHex(kv["background"], &t.background);
     ParseHex(kv["foreground"], &t.foreground);
@@ -53,9 +66,9 @@ Theme Load() {
     ParseHex(kv["muted"], &t.muted);
     ParseHex(kv["selection"], &t.selection);
     const std::string mode = kv["mode"];
-    if (mode.find("light") != std::string::npos) {
+    if (mode == "light") {
       t.dark = false;
-    } else if (mode.find("dark") == std::string::npos) {
+    } else if (mode != "dark") {
       std::ifstream lm(dir + "/light.mode");
       t.dark = !lm.good();
     }
@@ -96,7 +109,10 @@ void ApplyTheme(CefRefPtr<CefRequestContext> ctx) {
     CefString error;
     auto on = CefValue::Create();
     on->SetBool(true);
-    ctx->SetPreference("extensions.ui.developer_mode", on, error);
+    if (!ctx->SetPreference("extensions.ui.developer_mode", on, error)) {
+      std::cerr << "qi-cef: couldn't turn on extension developer mode: " << error.ToString()
+                << "\n";
+    }
   }
 }
 

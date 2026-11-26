@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -16,7 +17,11 @@
 #include "include/cef_app.h"
 #include "include/cef_command_ids.h"
 #include "include/cef_parser.h"
+#include "include/cef_task.h"
 #include "include/views/cef_box_layout.h"
+#include "include/views/cef_button.h"
+#include "include/views/cef_panel.h"
+#include "include/views/cef_textfield.h"
 #include "include/views/cef_window.h"
 #include "include/wrapper/cef_helpers.h"
 #include "qi.h"
@@ -63,6 +68,87 @@ void ShowToolbar(CefRefPtr<CefBrowserView> view, bool visible) {
   toolbar->SetVisible(visible);
   if (auto window = view->GetWindow()) window->Layout();
 }
+
+int LocationScore(CefRefPtr<CefView> view) {
+  if (!view) return 0;
+  if (view->AsTextfield()) return 80;
+  const std::string type = view->GetTypeString();
+  if (type.find("Omnibox") != std::string::npos) return 100;
+  if (type.find("LocationBar") != std::string::npos) return 70;
+  if (type.find("Textfield") != std::string::npos) return 80;
+  return 0;
+}
+
+void Consider(CefRefPtr<CefView> view,
+              CefRefPtr<CefView>* best,
+              int* best_score,
+              CefRefPtr<CefView>* widest,
+              int* widest_px) {
+  if (!view) return;
+  int score = LocationScore(view);
+  if (score > *best_score) {
+    *best_score = score;
+    *best = view;
+  }
+  if (view->IsFocusable() && !view->AsButton() && view->GetBounds().width > *widest_px) {
+    *widest_px = view->GetBounds().width;
+    *widest = view;
+  }
+  if (auto panel = view->AsPanel()) {
+    for (size_t i = 0; i < panel->GetChildViewCount(); ++i)
+      Consider(panel->GetChildViewAt(i), best, best_score, widest, widest_px);
+  }
+}
+
+// chrome/browser/ui/view_ids.h in Chromium 158. The toolbar is reparented
+// out of the BrowserView, so Chrome's own focus command never sees this
+// text field. The id is stable for this CEF pin.
+constexpr int kOmniboxViewId = 1012;
+
+CefRefPtr<CefView> FindOmnibox(CefRefPtr<CefBrowserView> view) {
+  if (!view) return nullptr;
+  if (auto toolbar = view->GetChromeToolbar()) {
+    if (auto found = toolbar->GetViewForID(kOmniboxViewId)) return found;
+  }
+  if (auto window = view->GetWindow()) return window->GetViewForID(kOmniboxViewId);
+  return nullptr;
+}
+
+void FocusOmnibox(CefRefPtr<CefBrowserView> view) {
+  if (!view) return;
+  ShowToolbar(view, true);
+  if (auto window = view->GetWindow()) {
+    window->Layout();
+    window->Activate();
+  }
+  auto target = FindOmnibox(view);
+  if (!target) {
+    CefRefPtr<CefView> best;
+    CefRefPtr<CefView> widest;
+    int best_score = 0;
+    int widest_px = 0;
+    Consider(view->GetChromeToolbar(), &best, &best_score, &widest, &widest_px);
+    target = best_score > 0 ? best : widest;
+  }
+  if (target) {
+    target->RequestFocus();
+    if (auto field = target->AsTextfield()) field->SelectAll(false);
+    return;
+  }
+  if (auto browser = view->GetBrowser()) {
+    browser->GetHost()->ExecuteChromeCommand(IDC_FOCUS_LOCATION, CEF_WOD_CURRENT_TAB);
+  }
+}
+
+class FocusOmniboxTask : public CefTask {
+ public:
+  explicit FocusOmniboxTask(CefRefPtr<CefBrowserView> view) : view_(view) {}
+  void Execute() override { FocusOmnibox(view_); }
+
+ private:
+  CefRefPtr<CefBrowserView> view_;
+  IMPLEMENT_REFCOUNTING(FocusOmniboxTask);
+};
 
 class ViewDelegate : public CefBrowserViewDelegate {
  public:
@@ -146,7 +232,10 @@ class WindowDelegate : public CefWindowDelegate {
                            [&](auto& x) { return x->IsSame(window); }),
             w.end());
     view_ = nullptr;
-    if (w.empty()) CefQuitMessageLoop();
+    if (w.empty()) {
+      RestoreOpenStartupPrefs();
+      CefQuitMessageLoop();
+    }
   }
 
   bool CanClose(CefRefPtr<CefWindow>) override {
@@ -176,9 +265,8 @@ class WindowDelegate : public CefWindowDelegate {
       case kFocusLocation:
         if (browser) Toolbars()[browser->GetIdentifier()].transient = true;
         ShowToolbar(view_, true);
-        if (browser)
-          browser->GetHost()->ExecuteChromeCommand(IDC_FOCUS_LOCATION,
-                                                   CEF_WOD_CURRENT_TAB);
+        FocusOmnibox(view_);
+        CefPostDelayedTask(TID_UI, new FocusOmniboxTask(view_), 50);
         return true;
       case kTogglePinnedToolbar: {
         if (!browser) return true;
@@ -310,12 +398,22 @@ void OpenProfilePicker() {
     << "small{opacity:.65;display:block}.warn{color:" << t.Css(t.accent) << "}"
     << "</style><h1>Choose a Chrome profile</h1>"
     << "<p>These are your real browser profiles. Opening one runs it live in "
-       "Qi: its cookies, logins, extensions and settings.</p>";
-  for (auto& root : KnownRoots()) {
-    const bool active = root.id == ActiveRoot().id;
-    std::string holder = active ? "" : LiveLockHolder(root.dir);
-    h << "<h2>" << Escape(root.label) << " &middot; " << Escape(root.dir)
-      << (active ? " (this window)" : "") << "</h2>";
+       "Qi. A row marked copy is not the live profile. Chrome and Brave open "
+       "logged out until their safe-storage keys are mapped.</p>";
+  std::vector<ChromeRoot> roots = KnownRoots();
+  bool seen_active = false;
+  for (auto& r : roots) {
+    if (r.id == ActiveRoot().id && r.dir == ActiveRoot().dir) seen_active = true;
+  }
+  if (!seen_active && !ActiveRoot().dir.empty()) roots.push_back(ActiveRoot());
+  for (auto& root : roots) {
+    const bool active = root.id == ActiveRoot().id && root.dir == ActiveRoot().dir;
+    const bool copy =
+        active && !ActiveDataDir().empty() && ActiveDataDir() != root.dir;
+    const std::string shown = copy ? ActiveDataDir() : root.dir;
+    std::string holder = copy ? "" : LiveLockHolder(root.dir);
+    h << "<h2>" << Escape(root.label) << " &middot; " << Escape(shown)
+      << (copy ? " (copy)" : active ? " (this window)" : "") << "</h2>";
     if (!holder.empty())
       h << "<p class=warn>" << Escape(root.label) << " is open (" << Escape(holder)
         << "). Quit it before opening these here.</p>";
@@ -339,19 +437,24 @@ void OpenProfilePicker() {
   std::string html = h.str();
   std::string url = "data:text/html;base64," +
                     CefBase64Encode(html.data(), html.size()).ToString();
+  RememberPickerDocument(url);
   OpenWindow(StartupProfile(), url, false);
 }
 
 void SpawnFor(const std::string& root_id, const std::string& profile_dir) {
   char exe[4096];
   ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-  if (n <= 0) return;
+  if (n <= 0) {
+    Tell("couldn't find qi-cef to open " + root_id);
+    return;
+  }
   exe[n] = 0;
   std::string a1 = "--browser=" + root_id;
   std::string a2 = "--profile-directory=" + profile_dir;
   char* argv[] = {exe, a1.data(), a2.data(), nullptr};
-  pid_t pid;
-  posix_spawn(&pid, exe, nullptr, nullptr, argv, environ);
+  pid_t pid = 0;
+  int rc = posix_spawn(&pid, exe, nullptr, nullptr, argv, environ);
+  if (rc != 0) Tell("couldn't start " + root_id + ": " + strerror(rc));
 }
 
 void HandleCommandLine(CefRefPtr<CefCommandLine> cl) {
@@ -361,18 +464,7 @@ void HandleCommandLine(CefRefPtr<CefCommandLine> cl) {
     return;
   }
   std::string dir;
-  if (cl->HasSwitch("space")) {
-    std::string s = cl->GetSwitchValue("space");
-    int index = atoi(s.c_str()) - 1;
-    if (index < 0) {
-      auto spaces = Spaces();
-      for (size_t i = 0; i < spaces.size(); ++i) {
-        if (spaces[i].id == s || strcasecmp(spaces[i].name.c_str(), s.c_str()) == 0)
-          index = static_cast<int>(i);
-      }
-    }
-    dir = ProfileForSpace(index);
-  }
+  if (cl->HasSwitch("space")) dir = ResolveSpaceSwitch(cl->GetSwitchValue("space"));
   for (const char* key : {"profile-directory", "profile"}) {
     if (dir.empty() && cl->HasSwitch(key))
       dir = ResolveProfileDir(cl->GetSwitchValue(key));

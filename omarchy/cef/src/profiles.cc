@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 // Real Chrome profiles, the way Yab finds them.
 //
 // Yab (Sources/Fast/Import.swift, TabImport.swift, ExtensionImport.swift)
@@ -7,15 +10,26 @@
 // Qi (CEF) goes one step further on Linux: instead of copying a profile
 // in, it opens the browser's own user data dir as CEF's root cache path and
 // each profile folder as a request context, so the profile itself is live.
+#include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <sstream>
+#include <vector>
+
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE 1
+#endif
 
 #include "include/cef_parser.h"
 #include "include/cef_request_context_handler.h"
+#include "include/cef_values.h"
 #include "qi.h"
 
 namespace qi {
@@ -38,7 +52,25 @@ bool Exists(const std::string& path) {
   return stat(path.c_str(), &st) == 0;
 }
 
+bool IsDirectory(const std::string& path) {
+  struct stat st;
+  return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static std::vector<std::string>& BlockedDirs() {
+  static std::vector<std::string> v;
+  return v;
+}
+
+static bool CreationBlocked(const std::string& path) {
+  for (auto& b : BlockedDirs()) {
+    if (path == b || path.rfind(b + "/", 0) == 0) return true;
+  }
+  return false;
+}
+
 bool MakeDirs(const std::string& path) {
+  if (CreationBlocked(path)) return false;
   std::string cur;
   std::stringstream ss(path);
   std::string part;
@@ -46,17 +78,44 @@ bool MakeDirs(const std::string& path) {
   while (std::getline(ss, part, '/')) {
     if (part.empty()) continue;
     cur += part + "/";
+    if (CreationBlocked(cur.substr(0, cur.size() - 1))) return false;
     mkdir(cur.c_str(), 0700);
   }
   struct stat st;
   return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+static bool OmawebRunning() {
+  DIR* d = opendir("/proc");
+  if (!d) return false;
+  bool found = false;
+  while (dirent* ent = readdir(d)) {
+    if (ent->d_name[0] < '1' || ent->d_name[0] > '9') continue;
+    std::ifstream in(std::string("/proc/") + ent->d_name + "/comm");
+    std::string comm;
+    std::getline(in, comm);
+    if (comm == "omaweb") {
+      found = true;
+      break;
+    }
+  }
+  closedir(d);
+  return found;
+}
+
 static void MoveIfAbsent(const std::string& from, const std::string& to) {
-  if (!Exists(from) || Exists(to)) return;
+  if (!Exists(from)) return;
   auto slash = to.find_last_of('/');
-  if (slash != std::string::npos) MakeDirs(to.substr(0, slash));
-  std::rename(from.c_str(), to.c_str());
+  if (slash != std::string::npos) {
+    std::string parent = to.substr(0, slash);
+    if (!CreationBlocked(parent)) MakeDirs(parent);
+  }
+  if (renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0)
+    return;
+  if (errno == EEXIST || errno == ENOTEMPTY || errno == ENOENT) return;
+  std::cerr << "qi-cef: couldn't move " << from << " to " << to << ": " << strerror(errno)
+            << "\n";
+  if (Exists(from) && !Exists(to)) BlockedDirs().push_back(to);
 }
 
 void MigrateLegacyDirs() {
@@ -64,6 +123,20 @@ void MigrateLegacyDirs() {
   const std::string data = Xdg("XDG_DATA_HOME", ".local/share");
   const std::string state = Xdg("XDG_STATE_HOME", ".local/state");
   const std::string cache = Xdg("XDG_CACHE_HOME", ".cache");
+  if (OmawebRunning()) {
+    std::cerr << "qi-cef: Omaweb is still open, so its folders were left where they are\n";
+    const std::pair<std::string, std::string> pairs[] = {
+        {cfg + "/omaweb", cfg + "/qi"},
+        {data + "/omaweb", data + "/qi"},
+        {state + "/omaweb", state + "/qi"},
+        {cache + "/omaweb", cache + "/qi"},
+        {cache + "/omaweb-cef", cache + "/qi-cef"},
+    };
+    for (auto& [from, to] : pairs) {
+      if (Exists(from) && !Exists(to)) BlockedDirs().push_back(to);
+    }
+    return;
+  }
   MoveIfAbsent(cfg + "/omaweb", cfg + "/qi");
   MoveIfAbsent(data + "/omaweb", data + "/qi");
   MoveIfAbsent(state + "/omaweb", state + "/qi");
@@ -154,9 +227,10 @@ static std::vector<ChromeProfile> ProfilesInDir(const std::string& dir) {
       if (!seen) dirs.push_back(k);
     }
   }
-  if (dirs.empty() && Exists(dir + "/Default")) dirs.push_back("Default");
+  if (dirs.empty() && IsDirectory(dir + "/Default")) dirs.push_back("Default");
   for (auto& d : dirs) {
-    if (!Exists(dir + "/" + d)) continue;
+    if (d.empty() || d.find('/') != std::string::npos || d == "." || d == "..") continue;
+    if (!IsDirectory(dir + "/" + d)) continue;
     ChromeProfile p;
     p.dir = d;
     p.name = d;
@@ -234,13 +308,45 @@ std::string ProfileForSpace(int index) {
   if (index >= 0 && index < static_cast<int>(spaces.size())) {
     std::string dir = ResolveProfileDir(spaces[index].profile);
     if (dir.empty()) dir = ResolveProfileDir(spaces[index].name);
-    return dir.empty() ? StartupProfile() : dir;
+    return dir;
   }
   // No Space there: the Nth Chrome profile, like Chrome's own Ctrl+Shift+M.
   auto list = ProfilesIn(g_root);
   if (index >= 0 && index < static_cast<int>(list.size()))
     return list[index].dir;
   return "";
+}
+
+std::string ResolveSpaceSwitch(const std::string& selector) {
+  if (selector.empty()) return "";
+  int index = -1;
+  if (selector.find_first_not_of("0123456789") == std::string::npos) {
+    index = atoi(selector.c_str()) - 1;
+  } else {
+    auto spaces = Spaces();
+    for (size_t i = 0; i < spaces.size(); ++i) {
+      if (spaces[i].id == selector ||
+          strcasecmp(spaces[i].name.c_str(), selector.c_str()) == 0) {
+        index = static_cast<int>(i);
+        break;
+      }
+    }
+  }
+  if (index < 0) return "";
+  return ProfileForSpace(index);
+}
+
+bool KnownProfileFolder(const ChromeRoot& root, const std::string& dir) {
+  if (dir.empty() || dir.find('/') != std::string::npos || dir.find('\\') != std::string::npos ||
+      dir == "." || dir == "..")
+    return false;
+  const std::string base =
+      (root.id == g_root.id && !g_data_dir.empty()) ? g_data_dir : root.dir;
+  if (!IsDirectory(base + "/" + dir)) return false;
+  for (auto& p : ProfilesIn(root)) {
+    if (p.dir == dir) return true;
+  }
+  return false;
 }
 
 // ---- request contexts -------------------------------------------------------
@@ -283,6 +389,30 @@ CefRefPtr<CefRequestContext> ContextFor(const std::string& raw) {
   }
   m[dir] = ctx;
   return ctx;
+}
+
+void RestoreOpenStartupPrefs() {
+  for (auto& [folder, value] : OpenStartupPrefValues()) {
+    CefRefPtr<CefRequestContext> ctx;
+    auto& m = Contexts();
+    auto it = m.find(folder);
+    if (it != m.end()) ctx = it->second;
+    if (!ctx) {
+      auto g = CefRequestContext::GetGlobalContext();
+      if (g) {
+        std::string cache = g->GetCachePath().ToString();
+        auto slash = cache.find_last_of('/');
+        if ((slash == std::string::npos ? cache : cache.substr(slash + 1)) == folder) ctx = g;
+      }
+    }
+    if (!ctx) continue;
+    auto v = CefValue::Create();
+    v->SetInt(value);
+    CefString err;
+    if (!ctx->SetPreference("session.restore_on_startup", v, err)) {
+      std::cerr << "qi-cef: couldn't keep the startup setting for " << folder << "\n";
+    }
+  }
 }
 
 }  // namespace qi

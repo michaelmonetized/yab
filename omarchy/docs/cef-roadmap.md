@@ -30,16 +30,18 @@ Launch: `qi-cef`. Install: `make install-cef` (runtime in
   `--space`, `--picker`, `--browser`.
 - The profile is opened in place. A live `SingletonLock` (the other
   browser's pid still exists) refuses to start and says to use
-  `--snapshot`. A stale lock is ignored.
+  `--snapshot`. That copy can miss writes while the browser is saving.
+  A stale lock is ignored.
 - Before the first open of a real profile, a backup lands in
   `~/.local/share/qi/chrome-backups/<browser>-<date>-cef<version>/`.
   Caches, locks and sockets are left out. Three backups are kept. Restore
   steps are in `.complete`. `--no-backup` skips it. `--snapshot` runs a
-  throwaway copy instead, which is the right mode while Chromium is open.
+  throwaway copy instead while Chromium is open. The copy can be incomplete.
 - `Last Version` is restored on exit when CEF changed it, so Chromium
   does not treat the next start as a downgrade.
-- Chrome's flags file is forwarded (password store, feature lists,
-  `--load-extension`). Comma-list switches are merged and appended once.
+- Chrome's flags file forwards an allowlist (password store, feature
+  lists, `--load-extension`, the OAuth client). Sandbox switches are not
+  copied. Comma-list switches are merged and appended once.
   Overwriting CEF's own `--disable-features` crashes Chrome in
   `ActorUiContentsContainerController`. Do not append that switch a
   second time.

@@ -2,16 +2,17 @@
 //
 // Qi's second engine. Pages run in Chromium through CEF's Chrome
 // runtime with Chrome-style browsers, so real Chrome extensions (Web Store
-// installs, chrome.tabs, popups, native messaging) work. Profiles are your
-// real Chrome/Chromium profiles: CEF opens the browser's own user data dir
-// (~/.config/chromium, ~/.config/google-chrome, ...) and the profile folder
-// in it ("Default", "Profile 1", ...), so that profile's cookies, logins,
-// extensions and settings are live. The window stays Qi's: frameless,
-// Omarchy-themed, the Chrome toolbar hidden until asked for.
+// installs, chrome.tabs, popups, native messaging) work. Profiles are the
+// browser's own user data dir (~/.config/chromium, ~/.config/google-chrome,
+// ...) and the profile folder in it ("Default", "Profile 1", ...). Chromium
+// profiles keep their cookies and logins. Google Chrome and Brave open
+// logged out until their safe-storage keys are mapped. The window stays
+// Qi's: frameless, Omarchy-themed, the Chrome toolbar hidden until asked for.
 #pragma once
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "include/cef_browser.h"
@@ -29,6 +30,8 @@ std::string StateDir();  // ~/.local/state/qi
 void MigrateLegacyDirs();
 bool MakeDirs(const std::string& path);
 bool Exists(const std::string& path);
+bool IsDirectory(const std::string& path);
+void Tell(const std::string& msg);
 
 // ---- theme ------------------------------------------------------------------
 struct Theme {
@@ -82,6 +85,12 @@ struct Space {
 };
 std::vector<Space> Spaces();
 std::string ProfileForSpace(int index);  // 0-based; "" if none
+// --space= on the command line: a 1-based slot, a Space id, or a Space name.
+std::string ResolveSpaceSwitch(const std::string& selector);
+// True when dir is a profile folder in this root, not a display name.
+bool KnownProfileFolder(const ChromeRoot& root, const std::string& dir);
+// Puts session.restore_on_startup back on profiles this process opened.
+void RestoreOpenStartupPrefs();
 
 // ---- safety: locks and backups (safety.cc) ----------------------------------
 // Who holds the browser's SingletonLock: "" when free or stale.
@@ -96,6 +105,16 @@ bool CopyUserDataDir(const std::string& src,
 // Backs up the user data dir once per CEF version and day, keeping three.
 // Returns the backup folder, or "" with *error set.
 std::string BackupUserDataDir(const ChromeRoot& root, std::string* error);
+// Records session.restore_on_startup for every profile, then moves session
+// files aside so Chrome does not restore them into a second window. Release
+// puts the files back. Hold returns false if a file could not be moved.
+void RememberStartupPrefs(const std::string& data_dir);
+void RestoreStartupPrefsOnDisk();
+bool ApplyStartupPrefFile(const std::string& path);
+bool HoldBrowserSessions(const std::string& data_dir);
+void ReleaseBrowserSessions(const std::string& data_dir);
+// folder -> original restore_on_startup, for profiles that had the key.
+const std::vector<std::pair<std::string, int>>& OpenStartupPrefValues();
 
 // ---- windows ----------------------------------------------------------------
 void OpenWindow(const std::string& profile_dir,
@@ -111,5 +130,7 @@ void SpawnFor(const std::string& root_id, const std::string& profile_dir);
 
 // ---- client -----------------------------------------------------------------
 CefRefPtr<CefClient> SharedClient();
+void RememberPickerDocument(const std::string& url);
+bool IsPickerDocument(const std::string& url);
 
 }  // namespace qi

@@ -78,7 +78,7 @@ impl Profiles {
 
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(d) = path.parent() {
-            fs::create_dir_all(d)?;
+            paths::create_dir_all(d)?;
         }
         fs::write(path, serde_json::to_string_pretty(self)?)
     }

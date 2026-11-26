@@ -10,10 +10,21 @@
 namespace qi {
 namespace {
 
-// Lines of the browser's own flags file (~/.config/chromium-flags.conf), so
-// the profile runs the way that browser runs it: the same password store
-// (cookies and logins are encrypted with its key), the same extensions
-// loaded from the command line, the same Google API keys for its sign-in.
+// Compatibility switches Qi may copy from the browser's flags file.
+// Anything else stays out, including sandbox and security switches.
+bool AllowedFlag(const std::string& key) {
+  static const char* keys[] = {
+      "password-store", "enable-features",    "disable-features",
+      "load-extension", "gtk-version",        "oauth2-client-id",
+      "oauth2-client-secret",
+  };
+  for (const char* k : keys)
+    if (key == k) return true;
+  return false;
+}
+
+// Lines of the browser's own flags file (~/.config/chromium-flags.conf).
+// Only the allowlist above is copied. The file is never printed.
 void ForwardFlagsFile(const std::string& path,
                       CefRefPtr<CefCommandLine> cl,
                       std::map<std::string, std::string>* lists) {
@@ -28,7 +39,7 @@ void ForwardFlagsFile(const std::string& path,
     auto eq = kv.find('=');
     std::string key = kv.substr(0, eq);
     std::string value = eq == std::string::npos ? "" : kv.substr(eq + 1);
-    if (key.rfind("ozone-platform", 0) == 0) continue;  // set by us
+    if (!AllowedFlag(key)) continue;
     if (lists->count(key)) {
       std::string& v = (*lists)[key];
       v += (v.empty() ? "" : ",") + value;
@@ -61,6 +72,9 @@ class App : public CefApp, public CefBrowserProcessHandler {
     // never aliases "last used" from Local State.
     if (!cl->HasSwitch("profile-directory"))
       cl->AppendSwitchWithValue("profile-directory", StartupProfile());
+    // Chrome's own startup window is the stray "about:blank - Chromium"
+    // beside Qi. Qi opens its windows itself.
+    if (!cl->HasSwitch("no-startup-window")) cl->AppendSwitch("no-startup-window");
     // Comma lists: what we were given, plus the browser's flags file, each
     // switch appended exactly once.
     std::map<std::string, std::string> lists;

@@ -204,12 +204,17 @@ common reasons people install extensions on this build.
 Qi (CEF) is the other build. It is a CEF Views window on the Chrome
 runtime with Chrome-style browsers, so the real extension system is there:
 `chrome.tabs`, action popups, the Web Store, native messaging lookups.
-It opens your actual Chromium, Chrome or Brave profile (cookies, logins,
-extensions), after a backup, and refuses to start when that browser still
-holds the profile lock. LastPass's toolbar icon and popup work. The Qt
-window and this one stay separate: embedding a CEF browser inside Qt on
-Wayland is unsupported upstream. What is still missing (sidebar, split,
-agent, and the rest) is [docs/cef-roadmap.md](docs/cef-roadmap.md).
+It opens your actual Chromium, Chrome or Brave profile, after a backup,
+and refuses to start when that browser still holds the profile lock.
+The backup does not stop Qi from changing the live profile: extension
+developer mode is turned on, and Chrome sync metadata is cleared.
+`--snapshot` opens a copy instead. That copy can miss writes if the
+browser is still saving. Chromium keeps its cookies and logins. Chrome
+and Brave open logged out until their safe-storage keys are mapped.
+LastPass's toolbar icon and popup work on Chromium. The Qt window and
+this one stay separate: embedding a CEF browser inside Qt on Wayland is
+unsupported upstream. What is still missing (sidebar, split, agent, and
+the rest) is [docs/cef-roadmap.md](docs/cef-roadmap.md).
 
 From `omarchy/`:
 
@@ -251,9 +256,10 @@ api_key_env = "QI_AGENT_API_KEY"   # read from the environment
 ```
 
 The key comes from the environment variable named by `api_key_env`
-(default `QI_AGENT_API_KEY`, then `OPENAI_API_KEY`), else from
-`api_key_command`'s output, else `agent.api_key` in your config. The
-settings screen never asks for or writes the key.
+(default `QI_AGENT_API_KEY`, then the pre-rename `OMAWEB_AGENT_API_KEY`,
+then `OPENAI_API_KEY`), else from `api_key_command`'s output, else
+`agent.api_key` in your config. The settings screen never asks for or
+writes the key.
 
 ## Keys
 

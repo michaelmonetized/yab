@@ -38,7 +38,8 @@ static std::string ReadAll(const std::string& path) {
   return ss.str();
 }
 
-static void Tell(const std::string& msg) {
+namespace qi {
+void Tell(const std::string& msg) {
   std::cerr << "qi-cef: " << msg << "\n";
   if (!isatty(2)) {
     std::string cmd = "notify-send -a Qi 'Qi (CEF)' \"$QI_MSG\" 2>/dev/null";
@@ -47,6 +48,7 @@ static void Tell(const std::string& msg) {
     }
   }
 }
+}  // namespace qi
 
 static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
                       CefRefPtr<CefApp> app);
@@ -56,7 +58,7 @@ static std::string LastUsed(const std::string& dir) {
   if (v && v->GetType() == VTYPE_DICTIONARY) {
     if (auto p = v->GetDictionary()->GetDictionary("profile")) {
       std::string last = p->GetString("last_used");
-      if (!last.empty() && Exists(dir + "/" + last)) return last;
+      if (!last.empty() && IsDirectory(dir + "/" + last)) return last;
     }
   }
   return "Default";
@@ -91,6 +93,9 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
     std::cout << "qi-cef (CEF " << CEF_VERSION << ")\n";
     return 0;
   }
+  if (cl->HasSwitch("apply-startup-prefs")) {
+    return ApplyStartupPrefFile(cl->GetSwitchValue("apply-startup-prefs")) ? 0 : 1;
+  }
 
   // Which browser's user data dir.
   ChromeRoot root;
@@ -121,18 +126,42 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
   // Safety first: never two browsers on one profile, never without a backup.
   std::string data_dir = root.dir;
   const bool snapshot = cl->HasSwitch("snapshot");
+  bool owns_profile = false;
+  if (snapshot && root.id == "qi") {
+    Tell("--snapshot does not apply to Qi's own profile.");
+    return 2;
+  }
   if (root.id == "qi") {
     MakeDirs(root.dir);
+    owns_profile = true;
   } else if (snapshot) {
     data_dir = HomeDir() + "/.cache/qi-cef/snapshot-" + root.id;
-    std::error_code ec;
-    if (!cl->HasSwitch("keep-snapshot") || !Exists(data_dir)) {
-      std::filesystem::remove_all(data_dir, ec);
-      std::string err;
-      if (!CopyUserDataDir(root.dir, data_dir, &err)) {
-        Tell("couldn't copy " + root.dir + ": " + err);
-        return 4;
+    if (LockHeldByQi(data_dir)) {
+      // The running Qi owns this snapshot. CefInitialize hands it the
+      // command line. Do not delete the directory under it.
+    } else {
+      std::string holder = LiveLockHolder(data_dir);
+      if (!holder.empty()) {
+        Tell("a snapshot of " + root.label + " is already open (" + holder + ").");
+        return 3;
       }
+      const bool reuse =
+          cl->HasSwitch("keep-snapshot") && Exists(data_dir + "/.complete");
+      if (!reuse) {
+        std::error_code ec;
+        std::filesystem::remove_all(data_dir, ec);
+        std::string err;
+        if (!CopyUserDataDir(root.dir, data_dir, &err)) {
+          std::filesystem::remove_all(data_dir, ec);
+          Tell("couldn't copy " + root.dir + ": " + err);
+          return 4;
+        }
+        std::ofstream(data_dir + "/.complete")
+            << "source: " << root.dir << "\n"
+            << "Copy made by Qi. It can miss writes if " << root.label
+            << " was running.\n";
+      }
+      owns_profile = true;
     }
   } else if (LockHeldByQi(root.dir)) {
     // Qi (CEF) already runs this profile: CefInitialize below hands it our
@@ -141,7 +170,8 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
     std::string holder = LiveLockHolder(root.dir);
     if (!holder.empty()) {
       Tell(root.label + " is open on this profile (" + holder +
-           "). Quit it first, or run `qi-cef --snapshot` to use a copy.");
+           "). Quit it first, or run `qi-cef --snapshot` for a copy. "
+           "A copy taken while it is writing can miss the newest changes.");
       return 3;
     }
     if (!cl->HasSwitch("no-backup")) {
@@ -154,6 +184,7 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
       }
       std::cerr << "qi-cef: backup at " << backup << "\n";
     }
+    owns_profile = true;
   }
   SetActiveRoot(root, data_dir);
 
@@ -164,9 +195,17 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
       startup = ResolveProfileDir(cl->GetSwitchValue(key));
   }
   if (startup.empty() && cl->HasSwitch("space"))
-    startup = ProfileForSpace(atoi(cl->GetSwitchValue("space").ToString().c_str()) - 1);
+    startup = ResolveSpaceSwitch(cl->GetSwitchValue("space"));
   if (startup.empty()) startup = LastUsed(data_dir);
   SetStartupProfile(startup);
+
+  if (owns_profile) {
+    RememberStartupPrefs(data_dir);
+    if (!HoldBrowserSessions(data_dir)) {
+      Tell("couldn't set Chrome's session aside, so the profile wasn't opened.");
+      return 4;
+    }
+  }
 
   // Chrome writes its version beside the profiles; keep the browser's own
   // value so it doesn't treat the next start as a downgrade.
@@ -185,10 +224,15 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
 
   if (!CefInitialize(main_args, settings, app, nullptr)) {
     // Usually: Qi (CEF) already runs this dir and got our command line.
+    if (owns_profile) ReleaseBrowserSessions(data_dir);
     return CefGetExitCode();
   }
   CefRunMessageLoop();
   CefShutdown();
+  if (owns_profile) {
+    RestoreStartupPrefsOnDisk();
+    ReleaseBrowserSessions(data_dir);
+  }
 
   if (!snapshot && !last_version.empty() &&
       ReadAll(last_version_path) != last_version) {

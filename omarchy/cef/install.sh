@@ -20,8 +20,13 @@ if [ -f "$dest/libcef.so" ]; then
 fi
 install -m755 "$here/qi-cef.sh" "$PREFIX/bin/qi-cef"
 install -Dm644 "$here/../data/qi.svg" "$PREFIX/share/icons/hicolor/scalable/apps/qi.svg"
-sed "s|^Exec=qi-cef|Exec=$PREFIX/bin/qi-cef|" "$here/../data/qi-cef.desktop" \
-  > "$PREFIX/share/applications/qi-cef.desktop"
+exec_path="$PREFIX/bin/qi-cef"
+escaped=${exec_path//\\/\\\\}
+escaped=${escaped//\"/\\\"}
+awk -v exec="$escaped" '
+  /^Exec=/ { print "Exec=\"" exec "\" %U"; next }
+  { print }
+' "$here/../data/qi-cef.desktop" > "$PREFIX/share/applications/qi-cef.desktop"
 chmod 644 "$PREFIX/share/applications/qi-cef.desktop"
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$PREFIX/share/applications" || true

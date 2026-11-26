@@ -37,8 +37,10 @@ url_name="${archive//+/%2B}"
 base="https://cef-builds.spotifycdn.com"
 
 mkdir -p "$cache" "$here/third_party"
+cache="$(cd "$cache" && pwd)"
 cd "$cache"
-if [ ! -d "$name" ]; then
+if [ ! -f "$name/cmake/FindCEF.cmake" ]; then
+  rm -rf "$name"
   if [ ! -f "$archive" ]; then
     echo "fetch-cef: downloading $archive"
     curl -fL --retry 3 -o "$archive.part" "$base/$url_name"
@@ -47,7 +49,19 @@ if [ ! -d "$name" ]; then
   curl -fsSL -o "$archive.sha1" "$base/$url_name.sha1"
   echo "$(cat "$archive.sha1")  $archive" | sha1sum -c -
   echo "fetch-cef: unpacking"
-  tar xjf "$archive"
+  stage="$(mktemp -d "$cache/.unpack.XXXXXX")"
+  if ! tar xjf "$archive" -C "$stage"; then
+    rm -rf "$stage"
+    echo "fetch-cef: unpack failed" >&2
+    exit 1
+  fi
+  if [ ! -d "$stage/$name/cmake" ]; then
+    rm -rf "$stage"
+    echo "fetch-cef: archive did not contain $name" >&2
+    exit 1
+  fi
+  mv "$stage/$name" "$name"
+  rm -rf "$stage"
 fi
 ln -sfn "$cache/$name" "$here/third_party/cef"
 echo "fetch-cef: $here/third_party/cef -> $cache/$name"

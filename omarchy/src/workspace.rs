@@ -133,7 +133,7 @@ impl Workspace {
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
+            crate::paths::create_dir_all(dir)?;
         }
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, serde_json::to_string_pretty(&self.clone().sanitized(true))?)?;
