@@ -306,7 +306,7 @@ void OpenProfilePicker() {
     << "color:inherit;text-decoration:none;border:1px solid " << t.Css(t.muted) << ";margin:8px 0}"
     << "a.p:hover,a.p:focus{background:" << t.Css(t.selection) << ";outline:2px solid "
     << t.Css(t.accent) << "}.av{width:40px;height:40px;border-radius:50%;display:inline-grid;"
-    << "place-items:center;font-weight:700;color:" << t.Css(t.background) << ";object-fit:cover}"
+    << "place-items:center;font-weight:700;color:#fff;text-shadow:0 1px 2px #0008;object-fit:cover}"
     << "small{opacity:.65;display:block}.warn{color:" << t.Css(t.accent) << "}"
     << "</style><h1>Choose a Chrome profile</h1>"
     << "<p>These are your real browser profiles. Opening one runs it live in "

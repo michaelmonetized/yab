@@ -86,6 +86,9 @@ std::string ProfileForSpace(int index);  // 0-based; "" if none
 // ---- safety: locks and backups (safety.cc) ----------------------------------
 // Who holds the browser's SingletonLock: "" when free or stale.
 std::string LiveLockHolder(const std::string& user_data_dir);
+// True when another running Qi (CEF) holds the lock; it then gets our
+// command line instead of a refusal.
+bool LockHeldByQi(const std::string& user_data_dir);
 // Copies the user data dir (minus caches, locks and sockets) to dest.
 bool CopyUserDataDir(const std::string& src,
                      const std::string& dest,

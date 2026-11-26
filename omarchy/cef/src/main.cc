@@ -11,6 +11,7 @@
 //                                           Chrome/Chromium is open)
 //   qi-cef --install-extension=<id>     open its Web Store page
 //   qi-cef --extensions                 chrome://extensions
+#include <cstdlib>
 #include <unistd.h>
 
 #include <cstdio>
@@ -47,6 +48,9 @@ static void Tell(const std::string& msg) {
   }
 }
 
+static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
+                      CefRefPtr<CefApp> app);
+
 static std::string LastUsed(const std::string& dir) {
   auto v = CefParseJSON(ReadAll(dir + "/Local State"), JSON_PARSER_RFC);
   if (v && v->GetType() == VTYPE_DICTIONARY) {
@@ -58,13 +62,26 @@ static std::string LastUsed(const std::string& dir) {
   return "Default";
 }
 
-int main(int argc, char* argv[]) {
+// Zygote children run with --change-stack-guard-on-fork, so the canary
+// main() saved before the fork no longer matches by the time it returns,
+// and glibc aborts with "stack smashing detected". main() therefore has no
+// stack protector, and sub-processes leave through exit() rather than
+// returning through it.
+__attribute__((no_stack_protector)) int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);
   CefRefPtr<CefApp> app = CreateApp();
 
   // Sub-processes (renderer, GPU, ...) exit here.
   int code = CefExecuteProcess(main_args, app, nullptr);
-  if (code >= 0) return code;
+  if (code >= 0) {
+    app = nullptr;
+    std::exit(code);
+  }
+  return RunBrowser(argc, argv, main_args, app);
+}
+
+static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
+                      CefRefPtr<CefApp> app) {
   MigrateLegacyDirs();
 
   CefRefPtr<CefCommandLine> cl = CefCommandLine::CreateCommandLine();
@@ -117,6 +134,9 @@ int main(int argc, char* argv[]) {
         return 4;
       }
     }
+  } else if (LockHeldByQi(root.dir)) {
+    // Qi (CEF) already runs this profile: CefInitialize below hands it our
+    // command line (OnAlreadyRunningAppRelaunch) and returns.
   } else {
     std::string holder = LiveLockHolder(root.dir);
     if (!holder.empty()) {

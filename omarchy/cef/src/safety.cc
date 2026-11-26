@@ -46,6 +46,24 @@ std::string LiveLockHolder(const std::string& dir) {
                       : name + " (pid " + std::to_string(pid) + ")";
 }
 
+bool LockHeldByQi(const std::string& dir) {
+  char buf[512];
+  ssize_t n = readlink((dir + "/SingletonLock").c_str(), buf, sizeof(buf) - 1);
+  if (n <= 0) return false;
+  std::string target(buf, n);
+  auto dash = target.rfind('-');
+  if (dash == std::string::npos) return false;
+  char me[256] = {0};
+  gethostname(me, sizeof(me) - 1);
+  if (target.substr(0, dash) != me) return false;
+  int pid = atoi(target.c_str() + dash + 1);
+  if (pid <= 0 || pid == getpid()) return false;
+  std::error_code a, b;
+  auto theirs = fs::read_symlink("/proc/" + std::to_string(pid) + "/exe", a);
+  auto mine = fs::read_symlink("/proc/self/exe", b);
+  return !a && !b && theirs == mine;
+}
+
 static bool Skip(const fs::path& rel) {
   static const std::set<std::string> dirs = {
       "Cache", "Code Cache", "GPUCache", "DawnGraphiteCache",
