@@ -5,6 +5,7 @@
 use std::env;
 use std::fs;
 use std::io;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -109,13 +110,40 @@ pub fn home_dir() -> PathBuf {
     home()
 }
 
-fn block(to: &Path) {
-    if !to.exists() {
-        BLOCKED
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(to.to_path_buf());
+fn block(to: &Path) -> bool {
+    if to.exists() {
+        return false;
     }
+    BLOCKED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(to.to_path_buf());
+    true
+}
+
+fn sqlite_base(name: &std::ffi::OsStr) -> Option<&std::ffi::OsStr> {
+    let bytes = name.as_bytes();
+    for suffix in [b"-wal".as_slice(), b"-shm", b"-journal"] {
+        if bytes.len() > suffix.len() && bytes.ends_with(suffix) {
+            return Some(std::ffi::OsStr::from_bytes(
+                &bytes[..bytes.len() - suffix.len()],
+            ));
+        }
+    }
+    None
+}
+
+fn sqlite_members(base: &std::ffi::OsStr) -> [std::ffi::OsString; 4] {
+    let mut names = [
+        base.to_os_string(),
+        base.to_os_string(),
+        base.to_os_string(),
+        base.to_os_string(),
+    ];
+    names[1].push("-wal");
+    names[2].push("-shm");
+    names[3].push("-journal");
+    names
 }
 
 fn real_dir(path: &Path) -> bool {
@@ -154,29 +182,29 @@ fn remove_stub(path: &Path) -> io::Result<()> {
     fs::remove_dir(path)
 }
 
-fn move_if_absent(from: &Path, to: &Path) {
+fn move_if_absent(from: &Path, to: &Path) -> bool {
     if fs::symlink_metadata(from).is_err() {
-        return;
+        return true;
     }
     match fs::symlink_metadata(to) {
         Err(err) if err.kind() == io::ErrorKind::NotFound => relocate(from, to),
         Ok(_) if real_dir(from) && real_dir(to) => {
             if stub_dir(to) && remove_stub(to).is_ok() {
-                relocate(from, to);
+                relocate(from, to)
             } else {
-                merge_dirs(from, to);
+                merge_dirs(from, to)
             }
         }
-        _ => {}
+        _ => true,
     }
 }
 
-fn relocate(from: &Path, to: &Path) {
+fn relocate(from: &Path, to: &Path) -> bool {
     match rename_onto(from, to) {
-        Ok(()) => {}
-        Err(err) if err.raw_os_error() == Some(2) => {}
+        Ok(()) => true,
+        Err(err) if err.raw_os_error() == Some(2) => true,
         Err(err) if err.raw_os_error() == Some(17) && real_dir(from) && real_dir(to) => {
-            merge_dirs(from, to);
+            merge_dirs(from, to)
         }
         Err(err) => {
             eprintln!(
@@ -186,6 +214,9 @@ fn relocate(from: &Path, to: &Path) {
             );
             if from.exists() && !to.exists() {
                 block(to);
+                false
+            } else {
+                true
             }
         }
     }
@@ -200,35 +231,69 @@ fn rename_onto(from: &Path, to: &Path) -> io::Result<()> {
     rename_noreplace(from, to)
 }
 
-/// Moves each missing child from `from` into `to`. An existing file stays,
-/// and so does its copy in `from`, so a later launch can try again. `from`
-/// is removed only once nothing is left in it.
-fn merge_dirs(from: &Path, to: &Path) {
+fn listed(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
+}
+
+/// Moves each missing child from `from` into `to`. A SQLite database and its
+/// `-wal`, `-shm` and `-journal` files move together or not at all. An
+/// existing file stays, and so does its copy in `from`, so a later launch
+/// can try again. `from` is removed only once nothing is left in it.
+/// Returns false when a destination was blocked.
+fn merge_dirs(from: &Path, to: &Path) -> bool {
     let Ok(entries) = fs::read_dir(from) else {
-        return;
+        return true;
     };
     let names: Vec<_> = entries
         .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
         .collect();
-    for name in names {
-        let src = from.join(&name);
-        let dst = to.join(&name);
-        if fs::symlink_metadata(&src).is_err() {
+    let mut bases = Vec::new();
+    for name in &names {
+        let base = sqlite_base(name).unwrap_or(name.as_os_str());
+        if !bases.iter().any(|have: &std::ffi::OsString| have == base) {
+            bases.push(base.to_os_string());
+        }
+    }
+    let mut ok = true;
+    for base in bases {
+        let members = sqlite_members(&base);
+        let sidecars = members[1..]
+            .iter()
+            .any(|name| listed(&from.join(name)) || listed(&to.join(name)));
+        if sidecars {
+            if members.iter().any(|name| listed(&to.join(name))) {
+                continue;
+            }
+            for name in &members {
+                let src = from.join(name);
+                if !listed(&src) {
+                    continue;
+                }
+                ok = relocate(&src, &to.join(name)) && ok;
+            }
             continue;
         }
+        let src = from.join(&base);
+        if !listed(&src) {
+            continue;
+        }
+        let dst = to.join(&base);
         match fs::symlink_metadata(&dst) {
-            Err(err) if err.kind() == io::ErrorKind::NotFound => relocate(&src, &dst),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                ok = relocate(&src, &dst) && ok;
+            }
             Ok(_) if real_dir(&src) && real_dir(&dst) => {
                 if stub_dir(&dst) && remove_stub(&dst).is_ok() {
-                    relocate(&src, &dst);
+                    ok = relocate(&src, &dst) && ok;
                 } else if real_dir(&dst) {
-                    merge_dirs(&src, &dst);
+                    ok = merge_dirs(&src, &dst) && ok;
                 }
             }
             _ => {}
         }
     }
     let _ = fs::remove_dir(from);
+    ok
 }
 
 fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
@@ -263,8 +328,9 @@ fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
 /// engine data in a nested folder named for the old organization
 /// (`…/omaweb/omaweb/QtWebEngine/omaweb`); that becomes `…/qi/qi/QtWebEngine/qi`.
 ///
-/// Returns false when Omaweb is still running and the directories were left
-/// where they are. The caller must not open a Qt profile until this is true.
+/// Returns false when Omaweb is still running and a source directory exists,
+/// or when a destination was blocked because it could not be moved. The
+/// caller must not open a Qt profile until this is true.
 pub fn migrate_legacy_dirs() -> bool {
     let config = xdg("XDG_CONFIG_HOME", ".config");
     let data = xdg("XDG_DATA_HOME", ".local/share");
@@ -288,18 +354,26 @@ pub fn migrate_legacy_dirs() -> bool {
         ),
     ];
     if omaweb_running() {
-        eprintln!("qi: Omaweb is still open, so its folders were left where they are");
+        let mut pending = false;
         for (from, to) in &pairs {
             if from.exists() {
                 block(to);
+                pending = true;
             }
         }
-        return false;
+        if pending {
+            eprintln!("qi: Omaweb is still open, so its folders were left where they are");
+            return false;
+        }
     }
+    let mut ok = true;
     for (from, to) in &pairs {
-        move_if_absent(from, to);
+        ok = move_if_absent(from, to) && ok;
     }
-    true
+    if !ok {
+        eprintln!("qi: a destination is blocked, so the old folders stay where they are");
+    }
+    ok
 }
 
 #[cfg(test)]
@@ -449,6 +523,98 @@ mod tests {
         );
         assert!(!elsewhere.join("secret.txt").exists());
         assert!(fs::symlink_metadata(&to).unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    fn keeps_a_sqlite_database_with_its_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        write(&from.join("History"), "legacy-db");
+        write(&from.join("History-wal"), "legacy-wal");
+        write(&from.join("History-shm"), "legacy-shm");
+        write(&from.join("History-journal"), "legacy-journal");
+        write(&from.join("notes.txt"), "note");
+        write(&to.join("History"), "qi-db");
+        move_if_absent(&from, &to);
+        assert_eq!(fs::read_to_string(to.join("History")).unwrap(), "qi-db");
+        assert!(!to.join("History-wal").exists());
+        assert!(!to.join("History-shm").exists());
+        assert!(!to.join("History-journal").exists());
+        assert_eq!(
+            fs::read_to_string(from.join("History")).unwrap(),
+            "legacy-db"
+        );
+        assert_eq!(
+            fs::read_to_string(from.join("History-wal")).unwrap(),
+            "legacy-wal"
+        );
+        assert_eq!(
+            fs::read_to_string(from.join("History-shm")).unwrap(),
+            "legacy-shm"
+        );
+        assert_eq!(
+            fs::read_to_string(from.join("History-journal")).unwrap(),
+            "legacy-journal"
+        );
+        assert_eq!(fs::read_to_string(to.join("notes.txt")).unwrap(), "note");
+        assert!(!from.join("notes.txt").exists());
+    }
+
+    #[test]
+    fn moves_a_sqlite_database_when_nothing_of_it_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        write(&from.join("History"), "legacy-db");
+        write(&from.join("History-wal"), "legacy-wal");
+        write(&to.join("Bookmarks"), "qi");
+        move_if_absent(&from, &to);
+        assert_eq!(fs::read_to_string(to.join("History")).unwrap(), "legacy-db");
+        assert_eq!(
+            fs::read_to_string(to.join("History-wal")).unwrap(),
+            "legacy-wal"
+        );
+        assert!(!from.exists());
+    }
+
+    #[test]
+    fn leaves_a_database_when_only_its_wal_is_already_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        write(&from.join("History"), "legacy-db");
+        write(&to.join("History-wal"), "foreign-wal");
+        move_if_absent(&from, &to);
+        assert_eq!(
+            fs::read_to_string(from.join("History")).unwrap(),
+            "legacy-db"
+        );
+        assert_eq!(
+            fs::read_to_string(to.join("History-wal")).unwrap(),
+            "foreign-wal"
+        );
+        assert!(!to.join("History").exists());
+    }
+
+    #[test]
+    fn reports_a_blocked_destination() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let parent = dir.path().join("locked");
+        fs::create_dir(&parent).unwrap();
+        let to = parent.join("qi");
+        write(&from.join("a.txt"), "old");
+        let mut perms = fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o555);
+        fs::set_permissions(&parent, perms.clone()).unwrap();
+        let blocked = !move_if_absent(&from, &to);
+        perms.set_mode(0o755);
+        fs::set_permissions(&parent, perms).unwrap();
+        assert!(blocked);
+        assert!(from.join("a.txt").is_file());
+        assert!(creation_blocked(&to));
     }
 
     #[test]

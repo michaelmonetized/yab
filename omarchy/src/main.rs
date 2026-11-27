@@ -71,7 +71,7 @@ fn main() {
         return;
     }
     if !migrated {
-        eprintln!("qi: not starting while Omaweb has those folders open");
+        eprintln!("qi: not starting until those folders can move");
         std::process::exit(1);
     }
     let _ = bridge::INITIAL_PROFILE.set(profile);

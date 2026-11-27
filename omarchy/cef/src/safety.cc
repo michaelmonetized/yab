@@ -331,6 +331,7 @@ ProfileClaim ClaimProfile(const std::string& data_dir) {
   int fd = ::open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
   if (fd < 0) return ProfileClaim::Error;
   int dead_ms = 0;
+  int waited_ms = 0;
   while (true) {
     if (LockHeldByQi(data_dir)) {
       ::close(fd);
@@ -348,14 +349,18 @@ ProfileClaim ClaimProfile(const std::string& data_dir) {
       return ProfileClaim::Owner;
     }
     pid_t pid = ClaimPid(fd);
-    if (pid > 0 && SameExe(pid)) {
-      dead_ms = 0;
-    } else {
+    const bool live = pid > 0 && SameExe(pid);
+    if (!live) {
       dead_ms += 50;
       if (dead_ms >= 5000) {
         ::close(fd);
         return ProfileClaim::Error;
       }
+    }
+    waited_ms += 50;
+    if (waited_ms >= 5000) {
+      ::close(fd);
+      return ProfileClaim::Preparing;
     }
     usleep(50000);
   }
@@ -462,6 +467,28 @@ static bool MarkerMatches(const std::string& dest, const std::string& canon, boo
   auto nl = src.find('\n');
   if (nl != std::string::npos) src.resize(nl);
   return src == canon;
+}
+
+std::string SnapshotDirFor(const ChromeRoot& root) {
+  std::string id = root.id.empty() ? std::string("custom") : root.id;
+  if (id == "custom") id += "-" + FnvHex(Canon(root.dir));
+  return HomeDir() + "/.cache/qi-cef/snapshot-" + id;
+}
+
+bool SnapshotClobbersSource(const std::string& source, const std::string& dest) {
+  return Inside(dest, source);
+}
+
+bool SnapshotCanReuse(const std::string& data_dir, const std::string& source) {
+  return Exists(data_dir + "/.complete") && MarkerMatches(data_dir, Canon(source), true);
+}
+
+void WriteSnapshotMarker(const std::string& data_dir,
+                         const std::string& source,
+                         const std::string& label) {
+  std::ofstream marker(data_dir + "/.complete");
+  marker << "source: " << Canon(source) << "\n"
+         << "Copy made by Qi. It can miss writes if " << label << " was running.\n";
 }
 
 std::string BackupUserDataDir(const ChromeRoot& root, std::string* error) {
@@ -779,6 +806,11 @@ void RestoreStartupPrefsOnDisk() {
   }
 }
 
+void DiscardStartupPrefs() {
+  std::error_code ec;
+  fs::remove(PrefSidecarPath(), ec);
+}
+
 bool HoldBrowserSessions(const std::string& data_dir) {
   RecoverDeadManifests();
   ReleaseBrowserSessions(data_dir);
@@ -829,14 +861,29 @@ void ReleaseBrowserSessions(const std::string& data_dir) {
   std::error_code ec;
   bool ok = true;
   if (Exists(data_dir)) {
-    for (auto& e : fs::directory_iterator(data_dir, ec)) {
-      std::error_code se;
-      if (!e.is_directory(se) || se) continue;
-      if (SkipDot(e.path().filename().string())) continue;
-      ok = ReleaseOne(e.path().string()) && ok;
+    fs::directory_iterator it(data_dir, ec);
+    if (ec) {
+      ok = false;
+    } else {
+      for (; it != fs::directory_iterator(); it.increment(ec)) {
+        if (ec) {
+          ok = false;
+          break;
+        }
+        std::error_code se;
+        const bool is_dir = it->is_directory(se);
+        if (se) {
+          ok = false;
+          continue;
+        }
+        if (!is_dir) continue;
+        if (SkipDot(it->path().filename().string())) continue;
+        ok = ReleaseOne(it->path().string()) && ok;
+      }
     }
   }
   if (ok) {
+    ec.clear();
     fs::remove(ManifestPath(), ec);
   }
   if (HeldRoot() == data_dir) HeldRoot().clear();

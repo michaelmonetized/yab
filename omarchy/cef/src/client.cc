@@ -59,7 +59,7 @@ class Client : public CefClient,
     if (!view) return;
     if (auto window = view->GetWindow()) {
       const std::string profile = ProfileLabel(ProfileOf(browser));
-      window->SetTitle(title.ToString() + " — Qi · " + profile);
+      window->SetTitle(title.ToString() + ": Qi · " + profile);
     }
   }
 

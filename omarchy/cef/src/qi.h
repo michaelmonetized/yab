@@ -101,9 +101,20 @@ std::string LiveLockHolder(const std::string& user_data_dir);
 bool LockHeldByQi(const std::string& user_data_dir);
 // One process prepares a profile. Owner keeps the claim until exit.
 // Busy: another Qi is already in its message loop on this directory.
-enum class ProfileClaim { Owner, Busy, Error };
+// Preparing: a live Qi still holds the claim and has not finished starting.
+enum class ProfileClaim { Owner, Busy, Error, Preparing };
 ProfileClaim ClaimProfile(const std::string& data_dir);
 void ReleaseProfileClaim();
+// Where a --snapshot copy of this root is stored. Custom roots are keyed
+// by their canonical path so two different directories do not share one copy.
+std::string SnapshotDirFor(const ChromeRoot& root);
+// True when replacing dest would delete source.
+bool SnapshotClobbersSource(const std::string& source, const std::string& dest);
+// True when dest is a finished snapshot of source.
+bool SnapshotCanReuse(const std::string& data_dir, const std::string& source);
+void WriteSnapshotMarker(const std::string& data_dir,
+                         const std::string& source,
+                         const std::string& label);
 // Copies the user data dir (minus caches, locks and sockets) to dest.
 bool CopyUserDataDir(const std::string& src,
                      const std::string& dest,
@@ -117,6 +128,8 @@ std::string BackupUserDataDir(const ChromeRoot& root, std::string* error);
 // failed, and a failed hold leaves the profile as it was.
 bool RememberStartupPrefs(const std::string& data_dir);
 void RestoreStartupPrefsOnDisk();
+// Drops the preference sidecar when this launch never reached CEF.
+void DiscardStartupPrefs();
 bool ApplyStartupPrefFile(const std::string& path);
 bool HoldBrowserSessions(const std::string& data_dir);
 void ReleaseBrowserSessions(const std::string& data_dir);

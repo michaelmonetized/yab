@@ -177,8 +177,22 @@ static void Relocate(const std::string& from, const std::string& to) {
   if (Exists(from) && !Exists(to)) BlockedDirs().push_back(to);
 }
 
-// Moves each missing child. An existing file stays, and so does its copy in
-// `from`, so a later launch can try again. `from` is removed only when empty.
+static bool SidecarBase(const std::string& name, std::string* base) {
+  static const char* suffixes[] = {"-wal", "-shm", "-journal"};
+  for (const char* suffix : suffixes) {
+    const size_t n = std::strlen(suffix);
+    if (name.size() > n && name.compare(name.size() - n, n, suffix) == 0) {
+      *base = name.substr(0, name.size() - n);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Moves each missing child. A SQLite database and its -wal, -shm and -journal
+// files move together or not at all: if any of them is already at `to`, the
+// whole group stays in `from`. An existing file stays, and so does its copy
+// in `from`, so a later launch can try again. `from` is removed only when empty.
 static void MergeDirs(const std::string& from, const std::string& to) {
   DIR* d = opendir(from.c_str());
   if (!d) return;
@@ -188,9 +202,39 @@ static void MergeDirs(const std::string& from, const std::string& to) {
     kids.emplace_back(ent->d_name);
   }
   closedir(d);
+
+  std::vector<std::string> bases;
   for (auto& name : kids) {
-    std::string src = from + "/" + name;
-    std::string dst = to + "/" + name;
+    std::string base;
+    if (!SidecarBase(name, &base)) base = name;
+    bool seen = false;
+    for (auto& have : bases)
+      if (have == base) seen = true;
+    if (!seen) bases.push_back(std::move(base));
+  }
+
+  static const char* suffixes[] = {"-wal", "-shm", "-journal"};
+  for (auto& base : bases) {
+    bool sidecars = false;
+    for (const char* suffix : suffixes) {
+      const std::string side = base + suffix;
+      if (Listed(from + "/" + side) || Listed(to + "/" + side)) sidecars = true;
+    }
+    const std::string members[] = {base, base + "-wal", base + "-shm", base + "-journal"};
+    if (sidecars) {
+      bool collision = false;
+      for (auto& member : members)
+        if (Listed(to + "/" + member)) collision = true;
+      if (collision) continue;
+      for (auto& member : members) {
+        const std::string src = from + "/" + member;
+        if (!Listed(src)) continue;
+        Relocate(src, to + "/" + member);
+      }
+      continue;
+    }
+    const std::string src = from + "/" + base;
+    const std::string dst = to + "/" + base;
     if (!Listed(src)) continue;
     if (!Listed(dst)) {
       Relocate(src, dst);

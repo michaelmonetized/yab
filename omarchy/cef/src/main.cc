@@ -53,6 +53,18 @@ void Tell(const std::string& msg) {
 static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
                       CefRefPtr<CefApp> app);
 
+static bool ClaimDenied(ProfileClaim claim, const std::string& what) {
+  if (claim == ProfileClaim::Preparing) {
+    Tell(what + " is still being prepared. Wait for that launch to finish.");
+    return true;
+  }
+  if (claim == ProfileClaim::Error) {
+    Tell("couldn't lock " + what + ", so it wasn't opened.");
+    return true;
+  }
+  return false;
+}
+
 static bool SingleFolder(const std::string& name) {
   return !name.empty() && name != "." && name != ".." &&
          name.find('/') == std::string::npos && name.find('\\') == std::string::npos;
@@ -146,17 +158,14 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
         return 3;
       }
       ProfileClaim claim = ClaimProfile(root.dir);
-      if (claim == ProfileClaim::Error) {
-        Tell("couldn't lock Qi's profile, so it wasn't opened.");
-        return 4;
-      }
+      if (ClaimDenied(claim, "Qi's profile")) return 4;
       if (claim == ProfileClaim::Owner) {
         MakeDirs(root.dir);
         owns_profile = true;
       }
     }
   } else if (snapshot) {
-    data_dir = HomeDir() + "/.cache/qi-cef/snapshot-" + root.id;
+    data_dir = SnapshotDirFor(root);
     if (LockHeldByQi(data_dir)) {
       // The running Qi owns this snapshot. CefInitialize hands it the
       // command line. Do not delete the directory under it.
@@ -167,13 +176,20 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
         return 3;
       }
       ProfileClaim claim = ClaimProfile(data_dir);
-      if (claim == ProfileClaim::Error) {
-        Tell("couldn't lock the snapshot, so it wasn't opened.");
-        return 4;
-      }
+      if (ClaimDenied(claim, "the snapshot")) return 4;
       if (claim == ProfileClaim::Owner) {
+        if (SnapshotClobbersSource(root.dir, data_dir)) {
+          ReleaseProfileClaim();
+          Tell("the snapshot would delete " + root.dir);
+          return 4;
+        }
+        if (root.id == "custom" && !MakeDirs(root.dir)) {
+          ReleaseProfileClaim();
+          Tell("couldn't create " + root.dir);
+          return 4;
+        }
         const bool reuse =
-            cl->HasSwitch("keep-snapshot") && Exists(data_dir + "/.complete");
+            cl->HasSwitch("keep-snapshot") && SnapshotCanReuse(data_dir, root.dir);
         if (!reuse) {
           std::error_code ec;
           std::filesystem::remove_all(data_dir, ec);
@@ -184,10 +200,7 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
             Tell("couldn't copy " + root.dir + ": " + err);
             return 4;
           }
-          std::ofstream(data_dir + "/.complete")
-              << "source: " << root.dir << "\n"
-              << "Copy made by Qi. It can miss writes if " << root.label
-              << " was running.\n";
+          WriteSnapshotMarker(data_dir, root.dir, root.label);
         }
         owns_profile = true;
       }
@@ -204,11 +217,13 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
       return 3;
     }
     ProfileClaim claim = ClaimProfile(root.dir);
-    if (claim == ProfileClaim::Error) {
-      Tell("couldn't lock " + root.dir + ", so it wasn't opened.");
-      return 4;
-    }
+    if (ClaimDenied(claim, root.dir)) return 4;
     if (claim == ProfileClaim::Owner) {
+      if (root.id == "custom" && !MakeDirs(root.dir)) {
+        ReleaseProfileClaim();
+        Tell("couldn't create " + root.dir);
+        return 4;
+      }
       if (!cl->HasSwitch("no-backup")) {
         std::string err;
         std::string backup = BackupUserDataDir(root, &err);
@@ -238,6 +253,7 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
 
   if (owns_profile) {
     if (!RememberStartupPrefs(data_dir) || !HoldBrowserSessions(data_dir)) {
+      DiscardStartupPrefs();
       ReleaseBrowserSessions(data_dir);
       ReleaseProfileClaim();
       Tell("couldn't set Chrome's session aside, so the profile wasn't opened.");
@@ -263,6 +279,7 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
   if (!CefInitialize(main_args, settings, app, nullptr)) {
     // Usually: Qi (CEF) already runs this dir and got our command line.
     if (owns_profile) {
+      DiscardStartupPrefs();
       ReleaseBrowserSessions(data_dir);
       ReleaseProfileClaim();
     }
