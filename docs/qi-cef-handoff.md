@@ -1,4 +1,4 @@
-# Qi: CEF engine, Chrome extensions + real Chrome profiles — handoff
+# Qi: CEF engine, Chrome extensions + real Chrome profiles: handoff
 
 Written 2026-11-26 09:40 EST by the Grok Bot executor that started this work.
 Carried out the same day: the rename, the Qi (CEF) launcher, the live
