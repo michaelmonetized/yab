@@ -6,8 +6,10 @@
 // browser's own user data dir (~/.config/chromium, ~/.config/google-chrome,
 // ...) and the profile folder in it ("Default", "Profile 1", ...). Chromium
 // profiles keep their cookies and logins. Google Chrome and Brave open
-// logged out until their safe-storage keys are mapped. The window stays
-// Qi's: frameless, Omarchy-themed, the Chrome toolbar hidden until asked for.
+// logged out until their safe-storage keys are mapped. The window is
+// Chrome's own, so the tab strip is real. Tabs sit on a vertical sidebar,
+// collapsed until the pointer reaches the left edge, pinned with
+// Ctrl+Shift+L. Ctrl+T opens a tab. Ctrl+N opens a window.
 #pragma once
 
 #include <cstdint>
@@ -142,6 +144,8 @@ void OpenWindow(const std::string& profile_dir,
                 bool show_toolbar);
 void OpenProfilePicker();
 void CloseAllWindows();
+void TrackBrowser(CefRefPtr<CefBrowser> browser);
+void ForgetBrowser(CefRefPtr<CefBrowser> browser);
 void OnBrowserLoading(CefRefPtr<CefBrowser> browser);
 // Handles the command line of the first launch and of every relaunch.
 void HandleCommandLine(CefRefPtr<CefCommandLine> cl);
