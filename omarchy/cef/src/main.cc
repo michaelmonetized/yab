@@ -53,12 +53,17 @@ void Tell(const std::string& msg) {
 static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
                       CefRefPtr<CefApp> app);
 
+static bool SingleFolder(const std::string& name) {
+  return !name.empty() && name != "." && name != ".." &&
+         name.find('/') == std::string::npos && name.find('\\') == std::string::npos;
+}
+
 static std::string LastUsed(const std::string& dir) {
   auto v = CefParseJSON(ReadAll(dir + "/Local State"), JSON_PARSER_RFC);
   if (v && v->GetType() == VTYPE_DICTIONARY) {
     if (auto p = v->GetDictionary()->GetDictionary("profile")) {
       std::string last = p->GetString("last_used");
-      if (!last.empty() && IsDirectory(dir + "/" + last)) return last;
+      if (SingleFolder(last) && IsDirectory(dir + "/" + last)) return last;
     }
   }
   return "Default";
@@ -132,8 +137,24 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
     return 2;
   }
   if (root.id == "qi") {
-    MakeDirs(root.dir);
-    owns_profile = true;
+    if (LockHeldByQi(root.dir)) {
+      // Qi already runs its own profile. CefInitialize hands it the command line.
+    } else {
+      std::string holder = LiveLockHolder(root.dir);
+      if (!holder.empty()) {
+        Tell("Qi is open on this profile (" + holder + ").");
+        return 3;
+      }
+      ProfileClaim claim = ClaimProfile(root.dir);
+      if (claim == ProfileClaim::Error) {
+        Tell("couldn't lock Qi's profile, so it wasn't opened.");
+        return 4;
+      }
+      if (claim == ProfileClaim::Owner) {
+        MakeDirs(root.dir);
+        owns_profile = true;
+      }
+    }
   } else if (snapshot) {
     data_dir = HomeDir() + "/.cache/qi-cef/snapshot-" + root.id;
     if (LockHeldByQi(data_dir)) {
@@ -145,23 +166,31 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
         Tell("a snapshot of " + root.label + " is already open (" + holder + ").");
         return 3;
       }
-      const bool reuse =
-          cl->HasSwitch("keep-snapshot") && Exists(data_dir + "/.complete");
-      if (!reuse) {
-        std::error_code ec;
-        std::filesystem::remove_all(data_dir, ec);
-        std::string err;
-        if (!CopyUserDataDir(root.dir, data_dir, &err)) {
-          std::filesystem::remove_all(data_dir, ec);
-          Tell("couldn't copy " + root.dir + ": " + err);
-          return 4;
-        }
-        std::ofstream(data_dir + "/.complete")
-            << "source: " << root.dir << "\n"
-            << "Copy made by Qi. It can miss writes if " << root.label
-            << " was running.\n";
+      ProfileClaim claim = ClaimProfile(data_dir);
+      if (claim == ProfileClaim::Error) {
+        Tell("couldn't lock the snapshot, so it wasn't opened.");
+        return 4;
       }
-      owns_profile = true;
+      if (claim == ProfileClaim::Owner) {
+        const bool reuse =
+            cl->HasSwitch("keep-snapshot") && Exists(data_dir + "/.complete");
+        if (!reuse) {
+          std::error_code ec;
+          std::filesystem::remove_all(data_dir, ec);
+          std::string err;
+          if (!CopyUserDataDir(root.dir, data_dir, &err)) {
+            std::filesystem::remove_all(data_dir, ec);
+            ReleaseProfileClaim();
+            Tell("couldn't copy " + root.dir + ": " + err);
+            return 4;
+          }
+          std::ofstream(data_dir + "/.complete")
+              << "source: " << root.dir << "\n"
+              << "Copy made by Qi. It can miss writes if " << root.label
+              << " was running.\n";
+        }
+        owns_profile = true;
+      }
     }
   } else if (LockHeldByQi(root.dir)) {
     // Qi (CEF) already runs this profile: CefInitialize below hands it our
@@ -174,17 +203,25 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
            "A copy taken while it is writing can miss the newest changes.");
       return 3;
     }
-    if (!cl->HasSwitch("no-backup")) {
-      std::string err;
-      std::string backup = BackupUserDataDir(root, &err);
-      if (backup.empty()) {
-        Tell("couldn't back up " + root.dir + " (" + err +
-             "), so it wasn't opened.");
-        return 4;
-      }
-      std::cerr << "qi-cef: backup at " << backup << "\n";
+    ProfileClaim claim = ClaimProfile(root.dir);
+    if (claim == ProfileClaim::Error) {
+      Tell("couldn't lock " + root.dir + ", so it wasn't opened.");
+      return 4;
     }
-    owns_profile = true;
+    if (claim == ProfileClaim::Owner) {
+      if (!cl->HasSwitch("no-backup")) {
+        std::string err;
+        std::string backup = BackupUserDataDir(root, &err);
+        if (backup.empty()) {
+          ReleaseProfileClaim();
+          Tell("couldn't back up " + root.dir + " (" + err +
+               "), so it wasn't opened.");
+          return 4;
+        }
+        std::cerr << "qi-cef: backup at " << backup << "\n";
+      }
+      owns_profile = true;
+    }
   }
   SetActiveRoot(root, data_dir);
 
@@ -200,8 +237,9 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
   SetStartupProfile(startup);
 
   if (owns_profile) {
-    RememberStartupPrefs(data_dir);
-    if (!HoldBrowserSessions(data_dir)) {
+    if (!RememberStartupPrefs(data_dir) || !HoldBrowserSessions(data_dir)) {
+      ReleaseBrowserSessions(data_dir);
+      ReleaseProfileClaim();
       Tell("couldn't set Chrome's session aside, so the profile wasn't opened.");
       return 4;
     }
@@ -224,7 +262,10 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
 
   if (!CefInitialize(main_args, settings, app, nullptr)) {
     // Usually: Qi (CEF) already runs this dir and got our command line.
-    if (owns_profile) ReleaseBrowserSessions(data_dir);
+    if (owns_profile) {
+      ReleaseBrowserSessions(data_dir);
+      ReleaseProfileClaim();
+    }
     return CefGetExitCode();
   }
   CefRunMessageLoop();

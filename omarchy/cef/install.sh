@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Install Qi (CEF) under ~/.local: the runtime in lib/qi-cef, a wrapper
 # on PATH, and a "Qi (CEF)" launcher. Does not touch the Qt build.
 # CEF's namespace sandbox is enough here; chrome-sandbox is not made setuid.

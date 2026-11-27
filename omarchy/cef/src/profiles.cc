@@ -13,6 +13,9 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
+
+#include <cstring>
 
 #include <cerrno>
 #include <cstdio>
@@ -88,10 +91,14 @@ bool MakeDirs(const std::string& path) {
 static bool OmawebRunning() {
   DIR* d = opendir("/proc");
   if (!d) return false;
+  const uid_t me = geteuid();
   bool found = false;
   while (dirent* ent = readdir(d)) {
     if (ent->d_name[0] < '1' || ent->d_name[0] > '9') continue;
-    std::ifstream in(std::string("/proc/") + ent->d_name + "/comm");
+    std::string proc = std::string("/proc/") + ent->d_name;
+    struct stat st;
+    if (stat(proc.c_str(), &st) != 0 || st.st_uid != me) continue;
+    std::ifstream in(proc + "/comm");
     std::string comm;
     std::getline(in, comm);
     if (comm == "omaweb") {
@@ -103,19 +110,112 @@ static bool OmawebRunning() {
   return found;
 }
 
-static void MoveIfAbsent(const std::string& from, const std::string& to) {
-  if (!Exists(from)) return;
+static bool Listed(const std::string& path) {
+  struct stat st;
+  return lstat(path.c_str(), &st) == 0;
+}
+
+static bool RealDir(const std::string& path) {
+  struct stat st;
+  return lstat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static bool Dot(const char* name) {
+  return name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'));
+}
+
+// A directory of nothing but empty directories. A symlink is content, and
+// it is not followed.
+static bool StubDir(const std::string& path) {
+  if (!RealDir(path)) return false;
+  DIR* d = opendir(path.c_str());
+  if (!d) return false;
+  bool stub = true;
+  while (dirent* ent = readdir(d)) {
+    if (Dot(ent->d_name)) continue;
+    if (!StubDir(path + "/" + ent->d_name)) {
+      stub = false;
+      break;
+    }
+  }
+  closedir(d);
+  return stub;
+}
+
+static bool RemoveStub(const std::string& path) {
+  if (!RealDir(path)) return false;
+  DIR* d = opendir(path.c_str());
+  if (!d) return false;
+  std::vector<std::string> kids;
+  while (dirent* ent = readdir(d)) {
+    if (Dot(ent->d_name)) continue;
+    kids.emplace_back(ent->d_name);
+  }
+  closedir(d);
+  for (auto& name : kids) {
+    if (!RemoveStub(path + "/" + name)) return false;
+  }
+  return rmdir(path.c_str()) == 0;
+}
+
+static void MergeDirs(const std::string& from, const std::string& to);
+
+static void Relocate(const std::string& from, const std::string& to) {
   auto slash = to.find_last_of('/');
   if (slash != std::string::npos) {
     std::string parent = to.substr(0, slash);
     if (!CreationBlocked(parent)) MakeDirs(parent);
   }
-  if (renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0)
+  if (renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0) return;
+  if (errno == ENOENT) return;
+  if ((errno == EEXIST || errno == ENOTEMPTY) && RealDir(from) && RealDir(to)) {
+    MergeDirs(from, to);
     return;
-  if (errno == EEXIST || errno == ENOTEMPTY || errno == ENOENT) return;
+  }
   std::cerr << "qi-cef: couldn't move " << from << " to " << to << ": " << strerror(errno)
             << "\n";
   if (Exists(from) && !Exists(to)) BlockedDirs().push_back(to);
+}
+
+// Moves each missing child. An existing file stays, and so does its copy in
+// `from`, so a later launch can try again. `from` is removed only when empty.
+static void MergeDirs(const std::string& from, const std::string& to) {
+  DIR* d = opendir(from.c_str());
+  if (!d) return;
+  std::vector<std::string> kids;
+  while (dirent* ent = readdir(d)) {
+    if (Dot(ent->d_name)) continue;
+    kids.emplace_back(ent->d_name);
+  }
+  closedir(d);
+  for (auto& name : kids) {
+    std::string src = from + "/" + name;
+    std::string dst = to + "/" + name;
+    if (!Listed(src)) continue;
+    if (!Listed(dst)) {
+      Relocate(src, dst);
+    } else if (RealDir(src) && RealDir(dst)) {
+      if (StubDir(dst) && RemoveStub(dst))
+        Relocate(src, dst);
+      else if (RealDir(dst))
+        MergeDirs(src, dst);
+    }
+  }
+  rmdir(from.c_str());
+}
+
+static void MoveIfAbsent(const std::string& from, const std::string& to) {
+  if (!Listed(from)) return;
+  if (!Listed(to)) {
+    Relocate(from, to);
+    return;
+  }
+  if (RealDir(from) && RealDir(to)) {
+    if (StubDir(to) && RemoveStub(to))
+      Relocate(from, to);
+    else
+      MergeDirs(from, to);
+  }
 }
 
 void MigrateLegacyDirs() {

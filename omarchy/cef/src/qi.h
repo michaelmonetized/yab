@@ -26,7 +26,8 @@ namespace qi {
 std::string HomeDir();
 std::string DataDir();   // ~/.local/share/qi
 std::string StateDir();  // ~/.local/state/qi
-// Moves omaweb's XDG dirs to qi when the qi dir is not already there.
+// Moves omaweb's XDG dirs onto qi. An empty qi directory is replaced. A qi
+// directory that already has files keeps them and takes the rest.
 void MigrateLegacyDirs();
 bool MakeDirs(const std::string& path);
 bool Exists(const std::string& path);
@@ -98,6 +99,11 @@ std::string LiveLockHolder(const std::string& user_data_dir);
 // True when another running Qi (CEF) holds the lock; it then gets our
 // command line instead of a refusal.
 bool LockHeldByQi(const std::string& user_data_dir);
+// One process prepares a profile. Owner keeps the claim until exit.
+// Busy: another Qi is already in its message loop on this directory.
+enum class ProfileClaim { Owner, Busy, Error };
+ProfileClaim ClaimProfile(const std::string& data_dir);
+void ReleaseProfileClaim();
 // Copies the user data dir (minus caches, locks and sockets) to dest.
 bool CopyUserDataDir(const std::string& src,
                      const std::string& dest,
@@ -107,8 +113,9 @@ bool CopyUserDataDir(const std::string& src,
 std::string BackupUserDataDir(const ChromeRoot& root, std::string* error);
 // Records session.restore_on_startup for every profile, then moves session
 // files aside so Chrome does not restore them into a second window. Release
-// puts the files back. Hold returns false if a file could not be moved.
-void RememberStartupPrefs(const std::string& data_dir);
+// puts the files back. Either call returns false when the journal or a move
+// failed, and a failed hold leaves the profile as it was.
+bool RememberStartupPrefs(const std::string& data_dir);
 void RestoreStartupPrefsOnDisk();
 bool ApplyStartupPrefFile(const std::string& path);
 bool HoldBrowserSessions(const std::string& data_dir);

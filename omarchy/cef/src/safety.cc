@@ -10,9 +10,12 @@
 //   ~/.local/share/qi/chrome-backups/<browser>-<date>-cef<version>/.
 //   The newest three of that browser are kept. A backup is not marked done
 //   if a browser took the lock while the copy was running.
-// - Chrome session files are moved aside for the run and put back on exit,
-//   so Qi does not open Chromium's windows and does not replace them.
+// - Chrome session files are moved aside for the run, onto the profile's own
+//   disk, and put back on exit, so Qi does not open Chromium's windows and
+//   does not replace them.
+#include <fcntl.h>
 #include <signal.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -52,6 +55,14 @@ std::string Canon(const std::string& path) {
   return (!ec && !c.empty()) ? c.string() : path;
 }
 
+bool Inside(const std::string& outer, const std::string& inner) {
+  std::string a = Canon(outer);
+  std::string b = Canon(inner);
+  if (a == b) return true;
+  if (!a.empty() && a.back() != '/') a.push_back('/');
+  return b.rfind(a, 0) == 0;
+}
+
 std::string FnvHex(const std::string& s) {
   uint64_t h = 14695981039346656037ull;
   for (unsigned char c : s) {
@@ -67,8 +78,30 @@ const char* kSessionNames[] = {
     "Sessions", "Current Session", "Current Tabs", "Last Session", "Last Tabs",
 };
 
+// Inside the profile directory, so the rename stays on that filesystem.
+// StateDir() can be a different mount from a custom --user-data-dir.
 std::string HoldDir(const std::string& profile_dir) {
-  return StateDir() + "/session-hold/" + FnvHex(Canon(profile_dir));
+  return profile_dir + "/.qi-session-hold";
+}
+
+bool SkipDot(const std::string& name) { return name.empty() || name[0] == '.'; }
+
+std::string ProfileRootOf(const std::string& file) {
+  auto slash = file.find_last_of('/');
+  if (slash == std::string::npos || slash == 0) return "";
+  auto slash2 = file.find_last_of('/', slash - 1);
+  if (slash2 == std::string::npos) return "";
+  return file.substr(0, slash2);
+}
+
+// A live browser on this machine has the profile. A stale lock, or one that
+// names another computer, does not.
+bool ProfileRootBusy(const std::string& file) {
+  std::string root = ProfileRootOf(file);
+  if (root.empty()) return false;
+  std::string holder = LiveLockHolder(root);
+  if (holder.empty() || holder.find("another computer") != std::string::npos) return false;
+  return true;
 }
 
 bool Escapes(const fs::path& rel) {
@@ -110,32 +143,72 @@ std::string PrefSidecarPath() { return HoldNote(".prefs"); }
 
 // One line per moved file: "<profile path>\t<hold path>". The wrapper reads
 // this if the process dies before ReleaseBrowserSessions runs.
-void NoteHeld(const std::string& dest, const std::string& src) {
-  std::ofstream o(ManifestPath(), std::ios::app);
-  o << dest << '\t' << src << '\n';
-  o.flush();
+bool NoteHeld(const std::string& dest, const std::string& src) {
+  std::string line = dest + '\t' + src + '\n';
+  int fd = open(ManifestPath().c_str(), O_CREAT | O_WRONLY | O_APPEND | O_CLOEXEC, 0600);
+  if (fd < 0) return false;
+  const char* p = line.data();
+  size_t left = line.size();
+  bool ok = true;
+  while (left) {
+    ssize_t n = ::write(fd, p, left);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      ok = false;
+      break;
+    }
+    p += n;
+    left -= static_cast<size_t>(n);
+  }
+  if (ok && ::fsync(fd) != 0) ok = false;
+  if (::close(fd) != 0) ok = false;
+  return ok;
 }
 
-void RestorePair(const std::string& dest, const std::string& src) {
-  if (!Exists(src)) return;
+bool RestorePair(const std::string& dest, const std::string& src) {
+  if (!Exists(src)) return true;
+  if (ProfileRootBusy(dest)) return false;
   std::error_code ec;
   fs::remove_all(dest, ec);
   fs::rename(src, dest, ec);
   if (ec) {
     std::cerr << "qi-cef: couldn't put back " << dest << ": " << ec.message() << "\n";
+    return false;
   }
+  return true;
+}
+
+void KeepLines(const std::string& path, const std::vector<std::string>& lines) {
+  std::error_code ec;
+  if (lines.empty()) {
+    fs::remove(path, ec);
+    return;
+  }
+  const std::string tmp = path + ".tmp";
+  {
+    std::ofstream o(tmp, std::ios::trunc);
+    for (auto& line : lines) o << line << '\n';
+    o.flush();
+    if (!o) {
+      fs::remove(tmp, ec);
+      return;
+    }
+  }
+  fs::rename(tmp, path, ec);
+  if (ec) fs::remove(tmp, ec);
 }
 
 void RestoreManifest(const std::string& path) {
   std::ifstream in(path);
   std::string line;
+  std::vector<std::string> left;
   while (std::getline(in, line)) {
     auto tab = line.find('\t');
     if (tab == std::string::npos) continue;
-    RestorePair(line.substr(0, tab), line.substr(tab + 1));
+    if (!RestorePair(line.substr(0, tab), line.substr(tab + 1))) left.push_back(line);
   }
-  std::error_code ec;
-  fs::remove(path, ec);
+  in.close();
+  KeepLines(path, left);
 }
 
 // A previous Qi that died left its manifest behind. Put those files back
@@ -229,6 +302,69 @@ bool LockHeldByQi(const std::string& dir) {
   auto theirs = fs::read_symlink("/proc/" + std::to_string(pid) + "/exe", a);
   auto mine = fs::read_symlink("/proc/self/exe", b);
   return !a && !b && theirs == mine;
+}
+
+namespace {
+int g_claim_fd = -1;
+
+bool SameExe(pid_t pid) {
+  if (pid <= 0 || pid == getpid()) return false;
+  if (kill(pid, 0) != 0) return false;
+  std::error_code a, b;
+  auto theirs = fs::read_symlink("/proc/" + std::to_string(pid) + "/exe", a);
+  auto mine = fs::read_symlink("/proc/self/exe", b);
+  return !a && !b && theirs == mine;
+}
+
+pid_t ClaimPid(int fd) {
+  if (lseek(fd, 0, SEEK_SET) < 0) return 0;
+  char buf[64] = {0};
+  ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+  if (n <= 0) return 0;
+  return static_cast<pid_t>(atoi(buf));
+}
+}  // namespace
+
+ProfileClaim ClaimProfile(const std::string& data_dir) {
+  if (!MakeDirs(StateDir() + "/session-hold")) return ProfileClaim::Error;
+  const std::string path = StateDir() + "/session-hold/" + FnvHex(Canon(data_dir)) + ".owner";
+  int fd = ::open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+  if (fd < 0) return ProfileClaim::Error;
+  int dead_ms = 0;
+  while (true) {
+    if (LockHeldByQi(data_dir)) {
+      ::close(fd);
+      return ProfileClaim::Busy;
+    }
+    if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
+      char buf[64];
+      int n = snprintf(buf, sizeof(buf), "%lld\n", static_cast<long long>(getpid()));
+      if (ftruncate(fd, 0) != 0 || lseek(fd, 0, SEEK_SET) < 0 || ::write(fd, buf, n) != n) {
+        flock(fd, LOCK_UN);
+        ::close(fd);
+        return ProfileClaim::Error;
+      }
+      g_claim_fd = fd;
+      return ProfileClaim::Owner;
+    }
+    pid_t pid = ClaimPid(fd);
+    if (pid > 0 && SameExe(pid)) {
+      dead_ms = 0;
+    } else {
+      dead_ms += 50;
+      if (dead_ms >= 5000) {
+        ::close(fd);
+        return ProfileClaim::Error;
+      }
+    }
+    usleep(50000);
+  }
+}
+
+void ReleaseProfileClaim() {
+  if (g_claim_fd < 0) return;
+  ::close(g_claim_fd);
+  g_claim_fd = -1;
 }
 
 static bool Skip(const fs::path& rel) {
@@ -338,6 +474,10 @@ std::string BackupUserDataDir(const ChromeRoot& root, std::string* error) {
   const std::string version = CEF_VERSION;
   const std::string short_version = version.substr(0, version.find('+'));
   const std::string dest = base + "/" + owner + "-" + day + "-cef" + short_version;
+  if (Inside(canon, dest) || Inside(dest, canon)) {
+    *error = "the backup would sit inside the profile";
+    return "";
+  }
   if (Exists(dest + "/.complete") &&
       MarkerMatches(dest, canon, root.id == "custom")) {
     return dest;
@@ -354,16 +494,24 @@ std::string BackupUserDataDir(const ChromeRoot& root, std::string* error) {
     fs::remove_all(dest, ec);
     return "";
   }
-  std::ofstream(dest + "/.complete")
-      << "source: " << canon << "\n"
-      << "Backup of " << root.dir << " made by Qi (CEF " << version
-      << ") before it opened that profile.\n"
-      << "Caches, locks and sockets were left out.\n"
-      << "To restore: quit every browser using it, then\n"
-      << "  broken=$(mktemp -d '" << root.dir << ".broken.XXXXXX') || exit 1\n"
-      << "  mv '" << root.dir << "' \"$broken\" || exit 1\n"
-      << "  cp -a '" << dest << "' '" << root.dir << "' || exit 1\n"
-      << "  rm -f '" << root.dir << "/.complete'\n";
+  {
+    std::ofstream marker(dest + "/.complete");
+    marker << "source: " << canon << "\n"
+           << "Backup of " << root.dir << " made by Qi (CEF " << version
+           << ") before it opened that profile.\n"
+           << "Caches, locks and sockets were left out.\n"
+           << "To restore: quit every browser using it, then\n"
+           << "  broken=$(mktemp -d '" << root.dir << ".broken.XXXXXX') || exit 1\n"
+           << "  mv '" << root.dir << "' \"$broken\" || exit 1\n"
+           << "  cp -a '" << dest << "' '" << root.dir << "' || exit 1\n"
+           << "  rm -f '" << root.dir << "/.complete'\n";
+    marker.flush();
+    if (!marker) {
+      *error = "couldn't write " + dest + "/.complete";
+      fs::remove_all(dest, ec);
+      return "";
+    }
+  }
   std::vector<std::string> mine;
   for (auto& e : fs::directory_iterator(base, ec)) {
     std::string n = e.path().filename().string();
@@ -399,6 +547,8 @@ size_t FindStartupPref(const std::string& text) {
   }
   return std::string::npos;
 }
+
+bool WritePrivate(const std::string& path, const std::string& body);
 
 bool PatchStartupPref(const std::string& path, bool had, int value) {
   if (!Exists(path)) return true;
@@ -443,31 +593,94 @@ bool PatchStartupPref(const std::string& path, bool had, int value) {
         session->GetInt("restore_on_startup") != value)
       return false;
   }
-  const std::string tmp = path + ".qi-tmp";
-  {
-    std::ofstream o(tmp, std::ios::binary);
-    o << edited;
-    if (!o) return false;
+  return WritePrivate(path, edited);
+}
+
+// A new 0600 file in the profile directory, then an atomic rename. The
+// temporary name is created with O_EXCL | O_NOFOLLOW so a symlink there is
+// not a place we write.
+bool WritePrivate(const std::string& path, const std::string& body) {
+  auto slash = path.find_last_of('/');
+  if (slash == std::string::npos || slash == 0) return false;
+  int dirfd = ::open(path.substr(0, slash).c_str(),
+                     O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (dirfd < 0) return false;
+  std::string base = path.substr(slash + 1);
+  std::string tmpname;
+  int fd = -1;
+  for (int i = 0; i < 32 && fd < 0; ++i) {
+    tmpname = ".qi-" + std::to_string(getpid()) + "-" + std::to_string(i) + "-" + base;
+    fd = ::openat(dirfd, tmpname.c_str(),
+                  O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY | O_CLOEXEC, 0600);
   }
-  std::error_code ec;
-  fs::rename(tmp, path, ec);
-  if (ec) {
-    fs::remove(tmp, ec);
+  if (fd < 0) {
+    ::close(dirfd);
     return false;
   }
+  auto fail = [&]() {
+    ::close(fd);
+    ::unlinkat(dirfd, tmpname.c_str(), 0);
+    ::close(dirfd);
+    return false;
+  };
+  const char* p = body.data();
+  size_t left = body.size();
+  while (left) {
+    ssize_t n = ::write(fd, p, left);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return fail();
+    }
+    p += n;
+    left -= static_cast<size_t>(n);
+  }
+  if (::fsync(fd) != 0) return fail();
+  if (::close(fd) != 0) {
+    fd = -1;
+    ::unlinkat(dirfd, tmpname.c_str(), 0);
+    ::close(dirfd);
+    return false;
+  }
+  fd = -1;
+  if (::renameat(dirfd, tmpname.c_str(), dirfd, base.c_str()) != 0) {
+    ::unlinkat(dirfd, tmpname.c_str(), 0);
+    ::close(dirfd);
+    return false;
+  }
+  ::close(dirfd);
   return true;
 }
 
-void WritePrefSidecar() {
-  std::ofstream o(PrefSidecarPath());
-  for (auto& p : StartupPrefs()) o << p.path << '\t' << (p.had ? 1 : 0) << '\t' << p.value << '\n';
-  o.flush();
+bool WritePrefSidecar() {
+  if (!MakeDirs(StateDir() + "/session-hold")) return false;
+  std::string body;
+  for (auto& p : StartupPrefs())
+    body += p.path + '\t' + (p.had ? "1" : "0") + '\t' + std::to_string(p.value) + '\n';
+  int fd = ::open(PrefSidecarPath().c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600);
+  if (fd < 0) return false;
+  const char* p = body.data();
+  size_t left = body.size();
+  bool ok = true;
+  while (left) {
+    ssize_t n = ::write(fd, p, left);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      ok = false;
+      break;
+    }
+    p += n;
+    left -= static_cast<size_t>(n);
+  }
+  if (ok && ::fsync(fd) != 0) ok = false;
+  if (::close(fd) != 0) ok = false;
+  return ok;
 }
 
 bool ApplyStartupPrefFile(const std::string& path) {
   std::ifstream in(path);
   if (!in) return false;
   bool ok = true;
+  std::vector<std::string> left;
   std::string line;
   while (std::getline(in, line)) {
     auto t1 = line.find('\t');
@@ -475,14 +688,26 @@ bool ApplyStartupPrefFile(const std::string& path) {
     auto t2 = line.find('\t', t1 + 1);
     if (t2 == std::string::npos) continue;
     std::string pref = line.substr(0, t1);
+    if (ProfileRootBusy(pref)) {
+      left.push_back(line);
+      ok = false;
+      continue;
+    }
     bool had = line.substr(t1 + 1, t2 - t1 - 1) == "1";
     int value = std::atoi(line.c_str() + t2 + 1);
-    ok = PatchStartupPref(pref, had, value) && ok;
+    if (!PatchStartupPref(pref, had, value)) {
+      left.push_back(line);
+      ok = false;
+    }
   }
-  if (!ok) return false;
-  std::error_code ec;
-  fs::remove(path, ec);
-  return true;
+  in.close();
+  if (ok) {
+    std::error_code ec;
+    fs::remove(path, ec);
+    return true;
+  }
+  KeepLines(path, left);
+  return false;
 }
 
 void RecoverPrefSidecars() {
@@ -509,13 +734,14 @@ void RecoverPrefSidecars() {
   for (auto& path : dead) ApplyStartupPrefFile(path);
 }
 
-void RememberStartupPrefs(const std::string& data_dir) {
+bool RememberStartupPrefs(const std::string& data_dir) {
   RecoverPrefSidecars();
   StartupPrefs().clear();
   std::error_code ec;
   for (auto& e : fs::directory_iterator(data_dir, ec)) {
     std::error_code se;
     if (!e.is_directory(se) || se) continue;
+    if (SkipDot(e.path().filename().string())) continue;
     StartupPref p;
     p.folder = e.path().filename().string();
     p.path = e.path().string() + "/Preferences";
@@ -531,7 +757,8 @@ void RememberStartupPrefs(const std::string& data_dir) {
     }
     StartupPrefs().push_back(p);
   }
-  WritePrefSidecar();
+  if (ec) return false;
+  return WritePrefSidecar();
 }
 
 const std::vector<std::pair<std::string, int>>& OpenStartupPrefValues() {
@@ -560,18 +787,27 @@ bool HoldBrowserSessions(const std::string& data_dir) {
   for (auto& e : fs::directory_iterator(data_dir, ec)) {
     std::error_code se;
     if (!e.is_directory(se) || se) continue;
+    if (SkipDot(e.path().filename().string())) continue;
     const std::string profile = e.path().string();
     bool any = false;
     for (const char* name : kSessionNames)
       any = any || Exists(profile + "/" + name);
     if (!any) continue;
     const std::string hold = HoldDir(profile);
-    if (!MakeDirs(hold)) return false;
+    if (!MakeDirs(hold)) {
+      ReleaseBrowserSessions(data_dir);
+      return false;
+    }
     for (const char* name : kSessionNames) {
       const fs::path src = fs::path(profile) / name;
       if (!Exists(src.string())) continue;
       const fs::path held = fs::path(hold) / name;
-      NoteHeld(src.string(), held.string());
+      if (!NoteHeld(src.string(), held.string())) {
+        std::cerr << "qi-cef: couldn't record " << src.string() << "\n";
+        ReleaseBrowserSessions(data_dir);
+        return false;
+      }
+      se.clear();
       fs::rename(src, held, se);
       if (se) {
         std::cerr << "qi-cef: couldn't set aside " << src.string() << ": " << se.message()
@@ -581,7 +817,10 @@ bool HoldBrowserSessions(const std::string& data_dir) {
       }
     }
   }
-  if (ec) return false;
+  if (ec) {
+    ReleaseBrowserSessions(data_dir);
+    return false;
+  }
   HeldRoot() = data_dir;
   return true;
 }
@@ -593,6 +832,7 @@ void ReleaseBrowserSessions(const std::string& data_dir) {
     for (auto& e : fs::directory_iterator(data_dir, ec)) {
       std::error_code se;
       if (!e.is_directory(se) || se) continue;
+      if (SkipDot(e.path().filename().string())) continue;
       ok = ReleaseOne(e.path().string()) && ok;
     }
   }

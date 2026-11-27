@@ -5,6 +5,7 @@
 use std::env;
 use std::fs;
 use std::io;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -30,12 +31,27 @@ pub fn create_dir_all(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path)
 }
 
+fn current_uid() -> u32 {
+    extern "C" {
+        fn geteuid() -> u32;
+    }
+    unsafe { geteuid() }
+}
+
 fn omaweb_running() -> bool {
     let Ok(entries) = fs::read_dir("/proc") else {
         return false;
     };
+    let uid = current_uid();
     for entry in entries.flatten() {
-        let comm = fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
+        let path = entry.path();
+        let Ok(meta) = fs::metadata(&path) else {
+            continue;
+        };
+        if meta.uid() != uid {
+            continue;
+        }
+        let comm = fs::read_to_string(path.join("comm")).unwrap_or_default();
         if comm.trim() == "omaweb" {
             return true;
         }
@@ -246,7 +262,10 @@ fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
 /// be overwritten stays in the old directory for a later launch. Qt kept
 /// engine data in a nested folder named for the old organization
 /// (`…/omaweb/omaweb/QtWebEngine/omaweb`); that becomes `…/qi/qi/QtWebEngine/qi`.
-pub fn migrate_legacy_dirs() {
+///
+/// Returns false when Omaweb is still running and the directories were left
+/// where they are. The caller must not open a Qt profile until this is true.
+pub fn migrate_legacy_dirs() -> bool {
     let config = xdg("XDG_CONFIG_HOME", ".config");
     let data = xdg("XDG_DATA_HOME", ".local/share");
     let state = xdg("XDG_STATE_HOME", ".local/state");
@@ -275,11 +294,12 @@ pub fn migrate_legacy_dirs() {
                 block(to);
             }
         }
-        return;
+        return false;
     }
     for (from, to) in &pairs {
         move_if_absent(from, to);
     }
+    true
 }
 
 #[cfg(test)]

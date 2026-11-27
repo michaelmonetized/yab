@@ -36,7 +36,7 @@ URLs open as tabs there.
   -h, --help  this text";
 
 fn main() {
-    paths::migrate_legacy_dirs();
+    let migrated = paths::migrate_legacy_dirs();
     let mut urls = Vec::new();
     let mut separate = false;
     let mut private = false;
@@ -69,6 +69,10 @@ fn main() {
 
     if !separate && ipc::hand_off(&urls, private, &profile) {
         return;
+    }
+    if !migrated {
+        eprintln!("qi: not starting while Omaweb has those folders open");
+        std::process::exit(1);
     }
     let _ = bridge::INITIAL_PROFILE.set(profile);
     let _ = bridge::INITIAL_URLS.set(urls);
