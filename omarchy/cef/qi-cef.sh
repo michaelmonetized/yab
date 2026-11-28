@@ -16,17 +16,51 @@ wait "$child"
 rc=$?
 
 state="${XDG_STATE_HOME:-$HOME/.local/state}/qi/session-hold"
+
+# SingletonLock is "<host>-<pid>" on the user-data dir. A live browser on
+# this machine holds it. A stale pid, or a lock from another computer, does not.
+profile_busy() {
+  dir=$1
+  lock=$dir/SingletonLock
+  [ -L "$lock" ] || return 1
+  target=$(readlink "$lock" 2>/dev/null) || return 1
+  host=${target%-*}
+  pid=${target##*-}
+  me=$(hostname 2>/dev/null || uname -n)
+  [ "$host" = "$me" ] || return 1
+  case $pid in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$pid" = "$$" ] && return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
 manifest="$state/$child.manifest"
 if [ -f "$manifest" ]; then
   tab=$(printf '\t')
+  busy_root=
   while IFS= read -r line || [ -n "$line" ]; do
     dest=${line%%"$tab"*}
-    src=${line#*"$tab"}
-    [ -n "$dest" ] && [ -n "$src" ] && [ -e "$src" ] || continue
-    rm -rf "$dest"
-    mv "$src" "$dest" || echo "qi-cef: couldn't put back $dest" >&2
+    [ -n "$dest" ] || continue
+    # dest is <user data>/<profile>/<file>. The lock sits on the user data dir.
+    udata=$(dirname "$(dirname "$dest")")
+    if profile_busy "$udata"; then
+      busy_root=$udata
+      break
+    fi
   done < "$manifest"
-  rm -f "$manifest"
+  if [ -n "$busy_root" ]; then
+    echo "qi-cef: leaving session files aside because another browser has $busy_root" >&2
+  else
+    while IFS= read -r line || [ -n "$line" ]; do
+      dest=${line%%"$tab"*}
+      src=${line#*"$tab"}
+      [ -n "$dest" ] && [ -n "$src" ] && [ -e "$src" ] || continue
+      rm -rf "$dest"
+      mv "$src" "$dest" || echo "qi-cef: couldn't put back $dest" >&2
+    done < "$manifest"
+    rm -f "$manifest"
+  fi
 fi
 prefs="$state/$child.prefs"
 if [ -f "$prefs" ]; then
