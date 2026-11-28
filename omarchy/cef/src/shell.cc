@@ -1,8 +1,11 @@
 // Qi's window.
 //
-// One CefWindow, a sidebar, and a stack of CefBrowserViews. The Chrome
-// toolbar is lifted into the floating address bar so LastPass still has a
-// place to put its icon. The stock tab strip is not on screen.
+// One CefWindow. The first page is a Chrome-style browser view so extensions
+// keep working. CEF rejects a second Chrome view in that window, and this
+// build's Chrome view is a popup so it cannot grow a tab. Later tabs are
+// Alloy views in the same window, same profile. The stock toolbar stays put
+// (moving it makes Browser's user-data host CHECK on close) and is hidden
+// until the extension hatch asks for it.
 #include "keys.h"
 #include "qi.h"
 
@@ -218,6 +221,7 @@ class Shell : public CefBaseRefCounted {
   CefRefPtr<CefLabelButton> gutter_spacer;
   CefRefPtr<CefPanel> stack;
   CefRefPtr<CefBoxLayout> stack_layout;
+  CefRefPtr<CefBrowserView> page;
   CefRefPtr<CefPanel> sidebar;
   CefRefPtr<CefPanel> favs;
   CefRefPtr<CefPanel> tabs_panel;
@@ -231,7 +235,6 @@ class Shell : public CefBaseRefCounted {
   bool pinned = false;
   bool peek = false;
   bool palette_on = false;
-  bool closing = false;
   bool rebind = false;
   Side mode = Side::Hidden;
   size_t active = 0;
@@ -243,6 +246,7 @@ class Shell : public CefBaseRefCounted {
   std::vector<std::string> chip_urls;
   std::vector<std::string> suggest_urls;
   struct Tab {
+    CefRefPtr<CefBrowser> browser;
     CefRefPtr<CefBrowserView> view;
     std::string title;
     std::string url;
@@ -260,6 +264,7 @@ class Shell : public CefBaseRefCounted {
   void TogglePin();
   void Raise();
   void AddTab(const std::string& url, bool background);
+  void Adopt(CefRefPtr<CefBrowser> browser);
   void Select(size_t index);
   void ShowActive();
   void CloseActive();
@@ -267,6 +272,9 @@ class Shell : public CefBaseRefCounted {
   void Note(CefRefPtr<CefBrowser> browser, const std::string& title, const std::string& url);
   void Navigated(CefRefPtr<CefBrowser> browser);
   void Drop(CefRefPtr<CefBrowser> browser);
+  // Drop the Chrome view before the window goes. Browser's destructor aborts
+  // if the toolbar is still registered on it.
+  void ReleaseChromeViews();
   void TakeToolbar(CefRefPtr<CefBrowserView> view);
   void Press(int id);
   void FieldChanged();
@@ -358,6 +366,14 @@ class FieldHub : public CefTextfieldDelegate {
   IMPLEMENT_REFCOUNTING(FieldHub);
 };
 
+class AlloyHub : public CefBrowserViewDelegate {
+ public:
+  cef_runtime_style_t GetBrowserRuntimeStyle() override { return CEF_RUNTIME_STYLE_ALLOY; }
+
+ private:
+  IMPLEMENT_REFCOUNTING(AlloyHub);
+};
+
 class ViewHub : public CefBrowserViewDelegate {
  public:
   explicit ViewHub(CefRefPtr<Shell> shell) : shell_(shell) {}
@@ -404,10 +420,12 @@ class WindowHub : public CefWindowDelegate {
       fs::remove_all(shell->private_dir, ec);
     }
     for (auto& tab : shell->tabs) {
-      auto browser = tab.view ? tab.view->GetBrowser() : nullptr;
-      if (browser && browser->GetHost()) browser->GetHost()->CloseBrowser(true);
+      auto browser = tab.browser;
+      if (!browser && tab.view) browser = tab.view->GetBrowser();
+      if (browser) ForgetBrowser(browser);
     }
     shell->tabs.clear();
+    shell->page = nullptr;
   }
   void OnWindowBoundsChanged(CefRefPtr<CefWindow>, const CefRect&) override {
     if (shell_ && shell_->alive) shell_->LayoutOverlays();
@@ -415,18 +433,19 @@ class WindowHub : public CefWindowDelegate {
   void OnWindowActivationChanged(CefRefPtr<CefWindow>, bool active) override {
     if (active && shell_ && shell_->alive) g_active = shell_;
   }
-  bool CanClose(CefRefPtr<CefWindow>) override {
-    if (!shell_ || shell_->tabs.empty()) return true;
-    if (!shell_->closing) {
-      shell_->closing = true;
-      std::vector<CefRefPtr<CefBrowserHost>> hosts;
-      for (auto& tab : shell_->tabs) {
-        auto browser = tab.view ? tab.view->GetBrowser() : nullptr;
-        if (browser && browser->GetHost()) hosts.push_back(browser->GetHost());
-      }
-      for (auto& host : hosts) host->CloseBrowser(false);
+  bool CanClose(CefRefPtr<CefWindow> window) override {
+    // Closing a Chrome browser aborts inside Browser's destructor. The last
+    // window is released and the process exits. Any earlier window is hidden
+    // so the others keep running.
+    if (shell_ && OtherWindowsOpen() && window) {
+      window->Hide();
+      ForgetWindow(window);
+      shell_->alive = false;
+      if (g_active && g_active.get() == shell_.get()) g_active = nullptr;
+      return false;
     }
-    return false;
+    if (shell_) shell_->ReleaseChromeViews();
+    return true;
   }
   bool OnAccelerator(CefRefPtr<CefWindow>, int id) override {
     if (!shell_ || !shell_->alive) return false;
@@ -461,10 +480,14 @@ class PopupHub : public CefWindowDelegate {
     ForgetWindow(window);
     view_ = nullptr;
   }
-  bool CanClose(CefRefPtr<CefWindow>) override {
-    auto browser = view_ ? view_->GetBrowser() : nullptr;
-    if (!browser || !browser->GetHost()) return true;
-    return browser->GetHost()->TryCloseBrowser();
+  bool CanClose(CefRefPtr<CefWindow> window) override {
+    // Same Chrome destructor abort as a main window. Hide the popup.
+    if (window) {
+      window->Hide();
+      ForgetWindow(window);
+    }
+    view_ = nullptr;
+    return false;
   }
   cef_runtime_style_t GetWindowRuntimeStyle() override { return CEF_RUNTIME_STYLE_CHROME; }
   bool GetLinuxWindowProperties(CefRefPtr<CefWindow>, CefLinuxWindowProperties& props) override {
@@ -654,24 +677,35 @@ void HideOmnibox(CefRefPtr<CefView> view) {
   }
 }
 
-void Shell::TakeToolbar(CefRefPtr<CefBrowserView> view) {
-  if (!view || !well) return;
+void HideStockChrome(CefRefPtr<CefBrowserView> view, bool show_toolbar) {
+  if (!view) return;
   auto bar = view->GetChromeToolbar();
   if (!bar) return;
-  auto parent = bar->GetParentView();
-  if (parent && well->IsSame(parent)) return;
-  well->AddChildView(bar);
   HideOmnibox(bar);
-  bar->SetVisible(false);
+  bar->SetVisible(show_toolbar);
+  auto parent = bar->GetParentView();
+  auto panel = parent ? parent->AsPanel() : nullptr;
+  if (!panel) return;
+  for (size_t i = 0; i < panel->GetChildViewCount(); ++i) {
+    auto child = panel->GetChildViewAt(i);
+    if (!child || child->IsSame(bar)) continue;
+    const std::string type = child->GetTypeString();
+    if (type.find("TabStrip") != std::string::npos) child->SetVisible(false);
+  }
+}
+
+void Shell::TakeToolbar(CefRefPtr<CefBrowserView> view) {
+  HideStockChrome(view, show_well);
 }
 
 void Shell::ShowActive() {
-  if (!stack_layout) return;
-  for (size_t i = 0; i < tabs.size(); ++i) {
-    bool on = i == active;
-    if (tabs[i].view) {
+  if (stack_layout) {
+    for (size_t i = 0; i < tabs.size(); ++i) {
+      if (!tabs[i].view) continue;
+      bool on = i == active;
       tabs[i].view->SetVisible(on);
       stack_layout->SetFlexForView(tabs[i].view, on ? 1 : 0);
+      if (on) HideStockChrome(tabs[i].view, show_well);
     }
   }
   rebind = !tabs.empty() && active < tabs.size() && tabs[active].keys;
@@ -683,25 +717,16 @@ void Shell::ShowActive() {
     window->SetTitle(title + ": Qi · " + who);
     window->Layout();
   }
-  if (well) {
-    for (size_t i = 0; i < well->GetChildViewCount(); ++i) {
-      auto child = well->GetChildViewAt(i);
-      bool on = false;
-      if (active < tabs.size() && tabs[active].view) {
-        auto bar = tabs[active].view->GetChromeToolbar();
-        on = bar && child && child->IsSame(bar);
-      }
-      if (child) child->SetVisible(on && show_well);
-    }
-  }
   PaintActive();
 }
 
 void Shell::PaintActive() { RebuildTabs(); }
 
 CefRefPtr<CefBrowser> Shell::ActiveBrowser() const {
-  if (active >= tabs.size() || !tabs[active].view) return nullptr;
-  return tabs[active].view->GetBrowser();
+  if (active >= tabs.size()) return nullptr;
+  if (tabs[active].browser) return tabs[active].browser;
+  if (tabs[active].view) return tabs[active].view->GetBrowser();
+  return nullptr;
 }
 
 std::string Shell::ActiveUrl() const {
@@ -717,6 +742,7 @@ std::string Shell::ActiveTitle() const {
 bool Shell::Owns(CefRefPtr<CefBrowser> browser) const {
   if (!browser) return false;
   for (auto& tab : tabs) {
+    if (tab.browser && tab.browser->IsSame(browser)) return true;
     auto have = tab.view ? tab.view->GetBrowser() : nullptr;
     if (have && have->IsSame(browser)) return true;
   }
@@ -737,18 +763,32 @@ void Shell::AddTab(const std::string& url, bool background) {
   CefBrowserSettings settings;
   settings.background_color = theme.background;
   std::string dest = url.empty() ? "chrome://newtab/" : url;
-  auto view = CefBrowserView::CreateBrowserView(SharedClient(), dest, settings, nullptr, ctx,
-                                                new ViewHub(this));
+  const bool chrome = !page;
+  CefRefPtr<CefBrowserViewDelegate> hub = chrome ? static_cast<CefBrowserViewDelegate*>(new ViewHub(this))
+                                                 : static_cast<CefBrowserViewDelegate*>(new AlloyHub());
+  auto view = CefBrowserView::CreateBrowserView(SharedClient(), dest, settings, nullptr, ctx, hub);
   view->SetPreferAccelerators(true);
+  if (chrome) page = view;
   Tab tab;
   tab.view = view;
   tab.url = dest;
   tab.title = "New tab";
   tab.keys = dest.rfind("data:text/html", 0) == 0 && dest.find("Qi%20keys") != std::string::npos;
   tabs.push_back(tab);
-  stack->AddChildView(view);
+  if (stack) stack->AddChildView(view);
   if (!background) active = tabs.size() - 1;
   ShowActive();
+}
+
+void Shell::Adopt(CefRefPtr<CefBrowser> browser) {
+  if (!browser) return;
+  auto view = CefBrowserView::GetForBrowser(browser);
+  if (!view) return;
+  for (auto& tab : tabs) {
+    if (!tab.view || !tab.view->IsSame(view)) continue;
+    if (!tab.browser) tab.browser = browser;
+    return;
+  }
 }
 
 void Shell::Go(const std::string& url) {
@@ -1103,8 +1143,9 @@ void Shell::Restore() {
 
 void Shell::Note(CefRefPtr<CefBrowser> browser, const std::string& title, const std::string& url) {
   for (auto& tab : tabs) {
-    auto have = tab.view ? tab.view->GetBrowser() : nullptr;
+    auto have = tab.browser ? tab.browser : (tab.view ? tab.view->GetBrowser() : nullptr);
     if (!have || !have->IsSame(browser)) continue;
+    if (url.rfind("data:text/html", 0) == 0 && url.find("Qi%20keys") != std::string::npos) tab.keys = true;
     if (!title.empty()) tab.title = title;
     if (!url.empty()) tab.url = url;
   }
@@ -1120,14 +1161,43 @@ void Shell::Navigated(CefRefPtr<CefBrowser> browser) {
   if (ActiveBrowser() && ActiveBrowser()->IsSame(browser)) ClosePalette();
 }
 
+void Shell::ReleaseChromeViews() {
+  // These three register on Chrome's browser and outlive a normal close:
+  // the toolbar, its autofill bubble, and the extension container. Remove
+  // the toolbar view so they unregister before that destructor runs.
+  if (page) {
+    auto bar = page->GetChromeToolbar();
+    auto parent = bar ? bar->GetParentView() : nullptr;
+    auto panel = parent ? parent->AsPanel() : nullptr;
+    if (panel && bar) panel->RemoveChildView(bar);
+  }
+  std::vector<CefRefPtr<CefBrowser>> browsers;
+  std::vector<CefRefPtr<CefBrowserView>> views;
+  for (auto& tab : tabs) {
+    auto browser = tab.browser;
+    if (!browser && tab.view) browser = tab.view->GetBrowser();
+    if (browser) browsers.push_back(browser);
+    if (tab.view) views.push_back(tab.view);
+    tab.view = nullptr;
+    tab.browser = nullptr;
+  }
+  page = nullptr;
+  tabs.clear();
+  for (auto& browser : browsers) ForgetBrowser(browser);
+  for (auto& view : views) {
+    if (stack) stack->RemoveChildView(view);
+  }
+}
+
 void Shell::Drop(CefRefPtr<CefBrowser> browser) {
   for (size_t i = 0; i < tabs.size(); ++i) {
-    auto have = tabs[i].view ? tabs[i].view->GetBrowser() : nullptr;
+    auto have = tabs[i].browser ? tabs[i].browser : (tabs[i].view ? tabs[i].view->GetBrowser() : nullptr);
     if (!have || !have->IsSame(browser)) continue;
-    if (stack && tabs[i].view) stack->RemoveChildView(tabs[i].view);
-    tabs.erase(tabs.begin() + i);
+    if (tabs[i].view && stack) stack->RemoveChildView(tabs[i].view);
+    if (page && tabs[i].view && page->IsSame(tabs[i].view)) page = nullptr;
+    tabs.erase(tabs.begin() + static_cast<long>(i));
     if (!tabs.empty() && active >= tabs.size()) active = tabs.size() - 1;
-    ShowActive();
+    if (!tabs.empty()) ShowActive();
     break;
   }
   if (tabs.empty() && window && !window->IsClosed())
@@ -1343,8 +1413,6 @@ bool Shell::Run(const std::string& name) {
   }
   if (name == "settings-keys") {
     AddTab(KeysPage(), false);
-    if (active < tabs.size()) tabs[active].keys = true;
-    ShowActive();
     return true;
   }
   if (name == "history") {
@@ -1564,6 +1632,18 @@ bool OpenAsTab(CefRefPtr<CefBrowser> opener, const std::string& url, bool backgr
   if (!shell) return false;
   shell->AddTab(url, background);
   return true;
+}
+
+void NoteOpened(CefRefPtr<CefBrowser> browser) {
+  if (!browser) return;
+  for (auto& shell : Shells()) {
+    if (!shell->alive || !shell->page) continue;
+    auto view = CefBrowserView::GetForBrowser(browser);
+    if (view && view->IsSame(shell->page)) {
+      shell->Adopt(browser);
+      return;
+    }
+  }
 }
 
 void NotePage(CefRefPtr<CefBrowser> browser, const std::string& title, const std::string& url) {

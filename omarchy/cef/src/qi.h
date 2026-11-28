@@ -155,10 +155,15 @@ void OpenFreshWindow(const std::string& profile_dir,
 bool OpenAsTab(CefRefPtr<CefBrowser> opener, const std::string& url, bool background);
 void NotePage(CefRefPtr<CefBrowser> browser, const std::string& title, const std::string& url);
 void NoteLoad(CefRefPtr<CefBrowser> browser);
+// A Chrome tab created inside a window we already own. Popups are ignored.
+void NoteOpened(CefRefPtr<CefBrowser> browser);
 bool RunAction(const std::string& name);
 void ReloadKeyMap();
 void RememberWindow(CefRefPtr<CefWindow> window);
 void ForgetWindow(CefRefPtr<CefWindow> window);
+// True when more than one Qi window is open. Closing one of them has to hide
+// it; destroying that Chrome browser aborts.
+bool OtherWindowsOpen();
 void OpenProfilePicker();
 void CloseAllWindows();
 void TrackBrowser(CefRefPtr<CefBrowser> browser);

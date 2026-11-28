@@ -29,10 +29,19 @@ std::vector<CefRefPtr<CefBrowser>>& Browsers() {
   return b;
 }
 
+void EndProcess() {
+  RestoreOpenStartupPrefs();
+  RestoreStartupPrefsOnDisk();
+  ReleaseBrowserSessions(ActiveDataDir());
+  ReleaseProfileClaim();
+  // Browser::~Browser aborts while ToolbarButtonProvider is still registered.
+  // The session files and the profile claim are already released.
+  _exit(0);
+}
+
 void QuitIfIdle() {
   if (!Windows().empty() || !Browsers().empty()) return;
-  RestoreOpenStartupPrefs();
-  CefQuitMessageLoop();
+  EndProcess();
 }
 
 std::string Escape(const std::string& s) {
@@ -79,12 +88,15 @@ void RememberWindow(CefRefPtr<CefWindow> window) {
   all.push_back(window);
 }
 
+bool OtherWindowsOpen() { return Windows().size() > 1; }
+
 void ForgetWindow(CefRefPtr<CefWindow> window) {
   auto& all = Windows();
   all.erase(std::remove_if(all.begin(), all.end(),
                            [&](auto& have) { return have->IsSame(window); }),
             all.end());
-  QuitIfIdle();
+  if (all.empty()) EndProcess();
+  else QuitIfIdle();
 }
 
 void TrackBrowser(CefRefPtr<CefBrowser> browser) {
@@ -106,9 +118,9 @@ void ForgetBrowser(CefRefPtr<CefBrowser> browser) {
 void OnBrowserLoading(CefRefPtr<CefBrowser>) {}
 
 void CloseAllWindows() {
-  auto browsers = Browsers();
-  for (auto& browser : browsers)
-    if (browser->GetHost()) browser->GetHost()->CloseBrowser(true);
+  // Close the windows. CanClose asks each tab to close. Forcing the browsers
+  // shut here runs Chrome's tab-strip layout after the view has left the
+  // widget, which segfaults.
   auto views = Windows();
   for (auto& window : views) window->Close();
 }

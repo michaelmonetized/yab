@@ -107,7 +107,10 @@ class Client : public CefClient,
   CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
   CefRefPtr<CefInputHandler> GetInputHandler() override { return this; }
 
-  void OnAfterCreated(CefRefPtr<CefBrowser> browser) override { TrackBrowser(browser); }
+  void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+    TrackBrowser(browser);
+    NoteOpened(browser);
+  }
 
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override { ForgetBrowser(browser); }
 
