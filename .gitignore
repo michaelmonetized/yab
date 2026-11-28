@@ -52,7 +52,7 @@ Phone/Reference/prototype.html
 # Completion signal remains readable after runner metadata is archived.
 /codex-done
 
-# Omaweb (omarchy/): Rust build output, editor and tool caches.
+# Qi (omarchy/): Rust build output, editor and tool caches.
 /target/
 /omarchy/target/
 **/*.rs.bk
@@ -72,7 +72,13 @@ credentials*.json
 secrets*.toml
 .netrc
 
-# Omaweb app state if a dev run points XDG dirs into the tree.
+# QEMU core dumps from a CEF build. Never commit these.
+/qemu_*.core
+
+# Scratch browser profiles from a local QA run. Never commit these.
+/.qa-*
+
+# Qi app state if a dev run points XDG dirs into the tree.
 /omarchy/.state/
 *.sock
 history.jsonl
@@ -86,7 +92,7 @@ Cookies-journal
 /omarchy/config.toml
 /omarchy/*.log
 /omarchy/nohup.out
-# Omaweb state added with spaces, profiles and extensions (only if a dev run
+# Qi state added with spaces, profiles and extensions (only if a dev run
 # points XDG dirs into the tree): workspace, per-profile data, the password
 # index, unpacked and imported extensions, blocklist caches, Chrome imports.
 workspace.json
@@ -104,3 +110,13 @@ Login Data
 Login Data-journal
 Local State
 *.crx
+
+# Qi (CEF engine, omarchy/cef/): CEF binaries are fetched by fetch-cef.sh,
+# never committed; build output, snapshots and Chrome profile copies too.
+/omarchy/cef/third_party/
+/omarchy/cef/build/
+/omarchy/cef/shots/
+cef_binary_*/
+*.tar.bz2
+snapshot-chromium/
+chrome-backups/

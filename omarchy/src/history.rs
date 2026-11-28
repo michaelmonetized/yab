@@ -1,6 +1,8 @@
 //! Browsing history, kept on this machine only, as a JSON-lines log in
-//! `~/.local/share/omaweb/history.jsonl`. It feeds address completion and
+//! `~/.local/share/qi/history.jsonl`. It feeds address completion and
 //! the start page.
+
+use crate::paths;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -91,7 +93,9 @@ impl History {
         let v = Visit { url: url.to_string(), title: title.to_string(), at: now() };
         if let Some(path) = &self.path {
             if let Some(dir) = path.parent() {
-                let _ = fs::create_dir_all(dir);
+                if paths::create_dir_all(dir).is_err() {
+                    return;
+                }
             }
             if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
                 let _ = writeln!(f, "{}", serde_json::to_string(&v).unwrap_or_default());
@@ -171,7 +175,9 @@ impl History {
         }
         if let Some(path) = &self.path {
             if let Some(dir) = path.parent() {
-                let _ = fs::create_dir_all(dir);
+                if paths::create_dir_all(dir).is_err() {
+                    return n;
+                }
             }
             if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
                 let _ = f.write_all(out.as_bytes());

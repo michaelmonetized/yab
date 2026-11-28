@@ -10,7 +10,7 @@
 #include <QtCore/QStringList>
 #include <QtWebEngineCore/QWebEngineUrlRequestInterceptor>
 
-namespace omaweb {
+namespace qi {
 
 class BlockInterceptor : public QWebEngineUrlRequestInterceptor
 {
@@ -63,4 +63,4 @@ private:
     BlockInterceptor* m_interceptor = nullptr;
 };
 
-} // namespace omaweb
+} // namespace qi

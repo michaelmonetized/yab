@@ -6,7 +6,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Dialogs
-import app.omaweb.native
+import app.qi.native
 
 Item {
     id: set
@@ -171,14 +171,14 @@ Item {
                         Widgets.Btn { pal: set.pal; text: "New space"; onClicked: set.host.newSpace("Space " + (set.host.ws.spaces.length + 1)) }
 
                         Head { text: "Profiles" }
-                        Note { text: "Each profile is its own browser: cookies, storage, cache, history, bookmarks, passwords and extensions are kept apart. Start one with omaweb --profile NAME." }
+                        Note { text: "Each profile is its own browser: cookies, storage, cache, history, bookmarks, passwords and extensions are kept apart. Start one with qi --profile NAME." }
                         Repeater {
                             model: set.host.profiles
                             delegate: Row2 {
                                 id: pr
                                 required property var modelData
                                 Text { text: pr.modelData.name + (pr.modelData.name === set.host.defaultProfile ? "  (default)" : ""); color: set.pal.fgBright; font.family: set.pal.font; Layout.preferredWidth: 200 }
-                                Note { text: pr.modelData.storage_path.length ? pr.modelData.storage_path : "~/.local/share/omaweb/QtWebEngine/omaweb" }
+                                Note { text: pr.modelData.storage_path.length ? pr.modelData.storage_path : "~/.local/share/qi/qi/QtWebEngine/qi" }
                                 Widgets.Btn { pal: set.pal; text: "Make default"; visible: pr.modelData.name !== set.host.defaultProfile; onClicked: set.put("default_profile", pr.modelData.name) }
                                 Widgets.Btn {
                                     pal: set.pal; text: "Remove"; danger: true; visible: pr.modelData.name !== "Default"
@@ -201,7 +201,7 @@ Item {
                         Head { text: "Agent" }
                         property var st: { set.visible; set.cfg; return JSON.parse(set.browser.agentStatus()) }
                         Note {
-                            text: parent.st.ready ? "Ready \u2014 key from " + parent.st.keySource + "." : "No API key found. Export " + (set.cfg.agent ? set.cfg.agent.api_key_env : "OMAWEB_AGENT_API_KEY") + " before starting Omaweb, or set an api_key_command (e.g. a pass/secret-tool lookup)."
+                            text: parent.st.ready ? "Ready \u2014 key from " + parent.st.keySource + "." : "No API key found. Export " + (set.cfg.agent ? set.cfg.agent.api_key_env : "QI_AGENT_API_KEY") + " before starting Qi, or set an api_key_command (e.g. a pass/secret-tool lookup)."
                             color: parent.st.ready ? set.pal.green : set.pal.yellow
                         }
                         Row2 { Name { text: "Endpoint (OpenAI-compatible)" } Widgets.Field { pal: set.pal; Layout.fillWidth: true; text: set.cfg.agent ? set.cfg.agent.endpoint : ""; onEditingFinished: set.put("agent.endpoint", text) } }
@@ -332,7 +332,7 @@ Item {
                         readonly property bool ok: set.browser.passwordsAvailable()
                         readonly property var list: { pwSec.prev; set.visible; return pwSec.ok ? JSON.parse(set.browser.passwords(set.extProfile, "")) : [] }
                         Note {
-                            text: pwSec.ok ? "Passwords live only in your keyring (Secret Service), never in Omaweb\u2019s files. Omaweb offers to save a password when you sign in, and Ctrl+Alt+L fills it."
+                            text: pwSec.ok ? "Passwords live only in your keyring (Secret Service), never in Qi\u2019s files. Qi offers to save a password when you sign in, and Ctrl+Alt+L fills it."
                                            : "Saving passwords needs secret-tool (libsecret) and a running keyring: sudo pacman -S libsecret gnome-keyring."
                             color: pwSec.ok ? set.pal.fgDark : set.pal.yellow
                         }
@@ -379,7 +379,7 @@ Item {
                             }
                         }
                         Row2 {
-                            Name { text: "Into Omaweb profile" }
+                            Name { text: "Into Qi profile" }
                             ComboBox { model: set.host.profiles.map(p => p.name); currentIndex: Math.max(0, model.indexOf(set.importTarget)); onActivated: i => set.importTarget = model[i] }
                         }
                         Flow {
@@ -441,7 +441,7 @@ Item {
                     // ---- About ----
                     Section {
                         visible: set.section === "about"
-                        Head { text: "Omaweb" }
+                        Head { text: "Qi" }
                         Note { text: "A chromeless, keyboard-first browser for Omarchy, in Rust and Qt WebEngine. Its sidebar, spaces, favorites, folders, Peek, split view, library and agent panel follow Yab (github.com/yetanotherbrowser/yab), Apache-2.0; see NOTICE and LICENSE." }
                         Note { text: "Theme: " + set.pal.name + " \u00b7 config: " + set.browser.configPath() }
                     }

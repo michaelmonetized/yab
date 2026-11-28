@@ -1,14 +1,14 @@
 [package]
-name = "omaweb"
+name = "qi"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "Omaweb: a keyboard-first, Omarchy-themed Wayland browser. A Rust + Qt Quick rewrite of Yab for Linux."
+description = "Qi: a keyboard-first, Omarchy-themed Wayland browser. A Rust + Qt Quick rewrite of Yab for Linux."
 repository = "https://github.com/michaelmonetized/yab"
 rust-version = "1.85"
 
 [[bin]]
-name = "omaweb"
+name = "qi"
 path = "src/main.rs"
 
 [dependencies]

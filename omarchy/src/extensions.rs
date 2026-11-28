@@ -9,7 +9,7 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// The Chromium version Omaweb's Qt WebEngine is based on, sent to the
+/// The Chromium version Qi's Qt WebEngine is based on, sent to the
 /// Web Store so it hands over a build that runs here.
 pub const PROD_VERSION: &str = "140.0.7339.264";
 

@@ -1,5 +1,5 @@
 //! The ad and tracker blocker's lists. Rust fetches and parses them into
-//! one plain file of hosts (`~/.cache/omaweb/blocklist.txt`); the C++
+//! one plain file of hosts (`~/.cache/qi/blocklist.txt`); the C++
 //! QWebEngineUrlRequestInterceptor loads that file and turns away any
 //! request to a listed host or its subdomains before it is made.
 //!

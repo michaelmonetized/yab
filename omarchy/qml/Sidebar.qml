@@ -72,7 +72,7 @@ Rectangle {
         color: side.pal.selection
         border.color: side.spaceColor
         opacity: 0.92
-        Drag.keys: ["omaweb-tab"]
+        Drag.keys: ["qi-tab"]
         Drag.hotSpot.x: 20
         Drag.hotSpot.y: 14
         Text { anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: Text.AlignVCenter; text: ghost.label; elide: Text.ElideRight; color: side.pal.fgBright; font.family: side.pal.font; font.pixelSize: side.pal.fontSize }
@@ -260,7 +260,7 @@ Rectangle {
                 border.width: 1
                 border.color: side.spaceColor
                 Text { anchors.centerIn: parent; text: "\u2605"; color: side.spaceColor; font.pixelSize: 14 }
-                DropArea { id: favDrop; anchors.fill: parent; keys: ["omaweb-tab"]; onDropped: side.host.op({ op: "favorite", uid: ghost.uid, on: true }) }
+                DropArea { id: favDrop; anchors.fill: parent; keys: ["qi-tab"]; onDropped: side.host.op({ op: "favorite", uid: ghost.uid, on: true }) }
             }
         }
 
@@ -381,7 +381,7 @@ Rectangle {
                     DropArea {
                         id: spDrop
                         anchors.fill: parent
-                        keys: ["omaweb-tab"]
+                        keys: ["qi-tab"]
                         onDropped: side.host.op({ op: "move_tab", uid: ghost.uid, space: sp.modelData.id, folder: "" })
                     }
                 }
@@ -446,7 +446,7 @@ Rectangle {
                 }
                 Text { visible: !nameField.visible; text: fr.row ? fr.row.count : ""; color: side.pal.fgDark; font.family: side.pal.font; font.pixelSize: side.pal.fontSize - 2; Layout.rightMargin: 8 }
             }
-            DropArea { id: drop; anchors.fill: parent; keys: ["omaweb-tab"]; onDropped: side.host.op({ op: "move_tab", uid: ghost.uid, folder: fr.folder.id }) }
+            DropArea { id: drop; anchors.fill: parent; keys: ["qi-tab"]; onDropped: side.host.op({ op: "move_tab", uid: ghost.uid, folder: fr.folder.id }) }
         }
     }
 
@@ -569,7 +569,7 @@ Rectangle {
             DropArea {
                 id: tabDrop
                 anchors.fill: parent
-                keys: ["omaweb-tab"]
+                keys: ["qi-tab"]
                 onDropped: if (ghost.uid !== cell.rec.uid) side.host.op({ op: "move_tab", uid: ghost.uid, before: cell.rec.uid, pinned: cell.rec.pinned, folder: cell.rec.folder })
             }
         }
@@ -595,7 +595,7 @@ Rectangle {
                 ToolTip.text: "Archive today's tabs (pinned tabs stay)"
                 ToolTip.delay: 500
             }
-            DropArea { anchors.fill: parent; keys: ["omaweb-tab"]; onDropped: side.host.op({ op: "move_tab", uid: ghost.uid, folder: "", pinned: false }) }
+            DropArea { anchors.fill: parent; keys: ["qi-tab"]; onDropped: side.host.op({ op: "move_tab", uid: ghost.uid, folder: "", pinned: false }) }
         }
     }
 
@@ -610,7 +610,7 @@ Rectangle {
             border.width: 1
             border.color: Qt.rgba(side.spaceColor.r, side.spaceColor.g, side.spaceColor.b, 0.6)
             Text { anchors.centerIn: parent; text: "Drop here to pin"; color: side.pal.fgDark; font.family: side.pal.font; font.pixelSize: side.pal.fontSize - 1 }
-            DropArea { id: pinDrop; anchors.fill: parent; keys: ["omaweb-tab"]; onDropped: side.host.op({ op: "move_tab", uid: ghost.uid, folder: "", pinned: true }) }
+            DropArea { id: pinDrop; anchors.fill: parent; keys: ["qi-tab"]; onDropped: side.host.op({ op: "move_tab", uid: ghost.uid, folder: "", pinned: true }) }
         }
     }
 
@@ -630,7 +630,7 @@ Rectangle {
                 Text { Layout.fillWidth: true; text: "New tab"; color: r.hovered ? side.pal.fgBright : side.pal.fgDark; font.family: side.pal.font; font.pixelSize: side.pal.fontSize }
                 Text { text: "ctrl+t"; color: side.pal.fgDark; opacity: 0.7; font.family: side.pal.font; font.pixelSize: side.pal.fontSize - 2; Layout.rightMargin: 8 }
             }
-            DropArea { id: nd; anchors.fill: parent; keys: ["omaweb-tab"]; onDropped: side.host.op({ op: "move_tab", uid: ghost.uid, folder: "", pinned: false }) }
+            DropArea { id: nd; anchors.fill: parent; keys: ["qi-tab"]; onDropped: side.host.op({ op: "move_tab", uid: ghost.uid, folder: "", pinned: false }) }
         }
     }
 

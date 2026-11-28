@@ -1,4 +1,4 @@
-//! Single instance. `omaweb <url>` from a terminal, a Hyprland bind or
+//! Single instance. `qi <url>` from a terminal, a Hyprland bind or
 //! `xdg-open` hands the URL to the running window over a Unix socket in
 //! `$XDG_RUNTIME_DIR` instead of starting a second browser.
 
@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 pub fn socket_path() -> PathBuf {
     let wd = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".into());
-    paths::runtime_dir().join(format!("omaweb-{wd}.sock"))
+    paths::runtime_dir().join(format!("qi-{wd}.sock"))
 }
 
 /// Sends the URLs to a running instance. Returns true when one took them.
@@ -84,7 +84,7 @@ pub fn listen(on_url: impl Fn(String, bool, String) + Send + 'static) {
     let path = socket_path();
     let _ = std::fs::remove_file(&path);
     let Ok(listener) = UnixListener::bind(&path) else {
-        eprintln!("omaweb: could not bind {}", path.display());
+        eprintln!("qi: could not bind {}", path.display());
         return;
     };
     std::thread::spawn(move || {

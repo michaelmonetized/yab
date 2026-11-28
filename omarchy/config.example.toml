@@ -1,4 +1,4 @@
-# ~/.config/omaweb/config.toml. Every key is optional.
+# ~/.config/qi/config.toml. Every key is optional.
 
 # Page for a fresh window with nothing to restore. Empty = start page.
 homepage = ""
@@ -43,15 +43,15 @@ peek = true
 # Force a dark rendering of every page (Chromium's auto dark mode).
 force_dark = false
 
-# The profile new spaces and plain `omaweb` use. Profiles are made in
-# Settings or with `omaweb --profile NAME`.
+# The profile new spaces and plain `qi` use. Profiles are made in
+# Settings or with `qi --profile NAME`.
 default_profile = "Default"
 
 # Ad and tracker blocking inside the engine, before requests are made.
 [blocker]
 enabled = true
 # Hosts files or adblock lists (||domain^ rules), URLs or file:// paths.
-# Refreshed weekly into ~/.cache/omaweb/lists.
+# Refreshed weekly into ~/.cache/qi/lists.
 lists = ["https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext"]
 # Sites never blocked on (Ctrl+E toggles the current one).
 allow = []
@@ -63,7 +63,7 @@ model = "gpt-4o-mini"
 # The key is read from this environment variable (then OPENAI_API_KEY),
 # else from api_key_command's output. Local endpoints need none.
 # Never put a key in a file you share.
-api_key_env = "OMAWEB_AGENT_API_KEY"
+api_key_env = "QI_AGENT_API_KEY"
 api_key_command = ""
 # How much of the page's visible text is sent, in characters.
 max_page_chars = 12000

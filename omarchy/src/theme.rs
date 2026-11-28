@@ -4,7 +4,7 @@
 //! Omarchy 3 into `~/.config/omarchy/current/theme` (a symlink to the theme).
 //! Either way the palette is a flat `colors.toml`; older themes only ship an
 //! `alacritty.toml`, which we read as a fallback. Missing keys are derived
-//! with the same rules `omarchy-theme-color` documents, so Omaweb agrees with
+//! with the same rules `omarchy-theme-color` documents, so Qi agrees with
 //! the bar, the terminal and every other themed app.
 
 use crate::paths;
@@ -18,7 +18,7 @@ pub struct Theme {
     pub name: String,
     pub dark: bool,
     pub font: String,
-    /// Where the palette came from, for `omaweb --theme`.
+    /// Where the palette came from, for `qi --theme`.
     pub source: String,
     pub colors: BTreeMap<String, String>,
 }
@@ -41,7 +41,7 @@ const FALLBACK: &[(&str, &str)] = &[
 
 /// Directories that may hold the active theme, most specific first.
 pub fn theme_dirs() -> Vec<PathBuf> {
-    if let Some(dir) = std::env::var_os("OMAWEB_THEME_DIR") {
+    if let Some(dir) = std::env::var_os("QI_THEME_DIR").or_else(|| std::env::var_os("OMAWEB_THEME_DIR")) {
         return vec![PathBuf::from(dir)];
     }
     vec![
@@ -50,7 +50,7 @@ pub fn theme_dirs() -> Vec<PathBuf> {
     ]
 }
 
-/// Paths to watch so a theme or font switch reaches Omaweb. We watch the
+/// Paths to watch so a theme or font switch reaches Qi. We watch the
 /// `current` directories rather than the theme itself because Omarchy swaps
 /// the theme in by renaming a staging dir or re-pointing a symlink.
 pub fn watch_paths() -> Vec<PathBuf> {
@@ -175,7 +175,7 @@ fn parse_alacritty(text: &str) -> BTreeMap<String, String> {
     colors
 }
 
-/// Fills every key Omaweb uses, following Omarchy's documented fallbacks.
+/// Fills every key Qi uses, following Omarchy's documented fallbacks.
 fn finish(
     name: String,
     source: String,
@@ -247,9 +247,11 @@ fn finish(
 /// Omarchy sets the system monospace font through fontconfig
 /// (`omarchy-font-set`), and mirrors it into the terminal configs.
 pub fn current_font() -> String {
-    if let Ok(f) = std::env::var("OMAWEB_FONT") {
-        if !f.trim().is_empty() {
-            return f.trim().to_string();
+    for key in ["QI_FONT", "OMAWEB_FONT"] {
+        if let Ok(f) = std::env::var(key) {
+            if !f.trim().is_empty() {
+                return f.trim().to_string();
+            }
         }
     }
     let cfg = paths::user_config_home();

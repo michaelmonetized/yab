@@ -1,13 +1,14 @@
 //! Profiles, like Chrome's: each one its own cookies, storage, cache,
-//! history, bookmarks, passwords and extensions. "Default" keeps the paths
-//! Omaweb used before profiles existed, so nothing moves on upgrade.
+//! history, bookmarks, passwords and extensions. "Default" keeps the
+//! original Qt WebEngine directory, so sign-ins survive upgrades and the
+//! rename from Omaweb. Qt's AppDataLocation is organization/application,
+//! both `qi`:
 //!
-//! Layout (XDG):
-//!   ~/.local/share/omaweb/profiles.json          the list
-//!   ~/.local/share/omaweb/QtWebEngine/omaweb     Default's web engine data
-//!   ~/.local/share/omaweb/history.jsonl          Default's history
-//!   ~/.local/share/omaweb/profiles/<slug>/       any other profile's data
-//!   ~/.cache/omaweb/profiles/<slug>/             its HTTP cache
+//!   ~/.local/share/qi/profiles.json                 the list
+//!   ~/.local/share/qi/qi/QtWebEngine/qi             Default's web engine data
+//!   ~/.local/share/qi/history.jsonl                 Default's history
+//!   ~/.local/share/qi/profiles/<slug>/              any other profile's data
+//!   ~/.cache/qi/profiles/<slug>/                    its HTTP cache
 
 use crate::paths;
 use serde::{Deserialize, Serialize};
@@ -77,7 +78,7 @@ impl Profiles {
 
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(d) = path.parent() {
-            fs::create_dir_all(d)?;
+            paths::create_dir_all(d)?;
         }
         fs::write(path, serde_json::to_string_pretty(self)?)
     }
@@ -143,7 +144,7 @@ pub fn info(p: &Profile) -> ProfileInfo {
         ProfileInfo {
             name: p.name.clone(),
             slug: "default".into(),
-            storage_name: "omaweb".into(),
+            storage_name: "qi".into(),
             storage_path: String::new(),
             cache_path: String::new(),
         }
@@ -152,7 +153,7 @@ pub fn info(p: &Profile) -> ProfileInfo {
         ProfileInfo {
             name: p.name.clone(),
             slug: slug.clone(),
-            storage_name: format!("omaweb-{slug}"),
+            storage_name: format!("qi-{slug}"),
             storage_path: data_dir_of(&p.name).join("engine").to_string_lossy().into_owned(),
             cache_path: paths::cache_dir().join("profiles").join(&slug).to_string_lossy().into_owned(),
         }
@@ -201,9 +202,9 @@ mod tests {
         let back = Profiles::load_from(&p);
         assert_eq!(back, ps);
         let infos = back.infos();
-        assert_eq!(infos[0].storage_name, "omaweb");
+        assert_eq!(infos[0].storage_name, "qi");
         assert_eq!(infos[0].storage_path, "");
-        assert_eq!(infos[1].storage_name, "omaweb-work");
+        assert_eq!(infos[1].storage_name, "qi-work");
         assert!(infos[1].storage_path.ends_with("profiles/work/engine"));
     }
 }

@@ -1,5 +1,5 @@
 //! Saved passwords live in the Secret Service (GNOME Keyring, KeePassXC,
-//! KWallet's bridge), never in Omaweb's files: `secret-tool` stores and
+//! KWallet's bridge), never in Qi's files: `secret-tool` stores and
 //! reads them. A small index (site and user name, no secret) per profile
 //! lets the settings screen list them without unlocking anything.
 
@@ -26,8 +26,8 @@ pub fn origin_of(url: &str) -> String {
     format!("{scheme}://{host}")
 }
 
-fn attrs<'a>(profile: &'a str, origin: &'a str, username: &'a str) -> [&'a str; 8] {
-    ["application", "omaweb", "profile", profile, "origin", origin, "username", username]
+fn attrs<'a>(app: &'a str, profile: &'a str, origin: &'a str, username: &'a str) -> [&'a str; 8] {
+    ["application", app, "profile", profile, "origin", origin, "username", username]
 }
 
 pub struct Store {
@@ -53,12 +53,12 @@ impl Store {
 
     pub fn save(&self, url: &str, username: &str, password: &str) -> Result<(), String> {
         let origin = origin_of(url);
-        let label = format!("Omaweb: {username} at {origin}");
+        let label = format!("Qi: {username} at {origin}");
         let mut child = Command::new("secret-tool")
             .arg("store")
             .arg("--label")
             .arg(&label)
-            .args(attrs(&self.profile, &origin, username))
+            .args(attrs("qi", &self.profile, &origin, username))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -79,8 +79,18 @@ impl Store {
 
     pub fn lookup(&self, url: &str, username: &str) -> Option<String> {
         let origin = origin_of(url);
-        let out = Command::new("secret-tool").arg("lookup").args(attrs(&self.profile, &origin, username)).output().ok()?;
-        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string()).filter(|s| !s.is_empty())
+        // New entries are stored as `qi`. Entries saved under the old name
+        // still unlock, so a rename does not drop them.
+        for app in ["qi", "omaweb"] {
+            let out = Command::new("secret-tool").arg("lookup").args(attrs(app, &self.profile, &origin, username)).output().ok()?;
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout).to_string();
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
+        }
+        None
     }
 
     pub fn for_site(&self, url: &str) -> Vec<Entry> {
@@ -90,7 +100,9 @@ impl Store {
     }
 
     pub fn remove(&self, origin: &str, username: &str) {
-        let _ = Command::new("secret-tool").arg("clear").args(attrs(&self.profile, origin, username)).status();
+        for app in ["qi", "omaweb"] {
+            let _ = Command::new("secret-tool").arg("clear").args(attrs(app, &self.profile, origin, username)).status();
+        }
         let list: Vec<Entry> = self.list().into_iter().filter(|e| !(e.origin == origin && e.username == username)).collect();
         self.write_index(&list);
     }

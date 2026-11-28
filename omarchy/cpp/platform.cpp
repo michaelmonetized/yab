@@ -7,13 +7,13 @@
 #include <QtQml/qqml.h>
 #include <QtWebEngineQuick/QtWebEngineQuick>
 
-namespace omaweb {
+namespace qi {
 
 void init_webengine()
 {
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QtWebEngineQuick::initialize();
-    qmlRegisterSingletonInstance("app.omaweb.native", 1, 0, "WebTools", WebTools::instance());
+    qmlRegisterSingletonInstance("app.qi.native", 1, 0, "WebTools", WebTools::instance());
 }
 
 void add_cookie(const QString& profile, const QString& name, const QString& value, const QString& domain,
@@ -40,4 +40,4 @@ void set_color_scheme(bool dark)
 #endif
 }
 
-} // namespace omaweb
+} // namespace qi

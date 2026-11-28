@@ -41,11 +41,17 @@ pub fn is_local(endpoint: &str) -> bool {
     ["://localhost", "://127.0.0.1", "://[::1]", "://0.0.0.0"].iter().any(|h| e.contains(h))
 }
 
-/// Finds the API key: the configured env var, then OPENAI_API_KEY, then
-/// `api_key_command`, then `api_key` in config.toml.
+/// Finds the API key: the configured env var, then the pre-rename name
+/// `OMAWEB_AGENT_API_KEY`, then OPENAI_API_KEY, then `api_key_command`,
+/// then `api_key` in config.toml.
 pub fn resolve_key(cfg: &AgentConfig, env: &dyn Fn(&str) -> Option<String>) -> (Option<String>, KeySource) {
-    let var = if cfg.api_key_env.trim().is_empty() { "OMAWEB_AGENT_API_KEY" } else { cfg.api_key_env.trim() };
-    for v in [var, "OPENAI_API_KEY"] {
+    let var = if cfg.api_key_env.trim().is_empty() { "QI_AGENT_API_KEY" } else { cfg.api_key_env.trim() };
+    let mut names = vec![var];
+    if var != "OMAWEB_AGENT_API_KEY" {
+        names.push("OMAWEB_AGENT_API_KEY");
+    }
+    names.push("OPENAI_API_KEY");
+    for v in names {
         if let Some(k) = env(v).map(|k| k.trim().to_string()).filter(|k| !k.is_empty()) {
             return (Some(k), KeySource::Env(v.to_string()));
         }
@@ -85,7 +91,7 @@ fn cut(s: &str, max: usize) -> String {
     out
 }
 
-pub const SYSTEM: &str = "You are the agent in Omaweb, a keyboard-first web browser for Omarchy Linux. \
+pub const SYSTEM: &str = "You are the agent in Qi, a keyboard-first web browser for Omarchy Linux. \
 You can see the user's current tab: its title, address, any selected text and the visible text. \
 Answer briefly and plainly; use the page's own facts and say when the page doesn't say. \
 Use the tools to act in the browser when asked: open pages, search, click, type, scroll, find text, or watch a page \
@@ -245,7 +251,7 @@ pub fn send(cfg: &AgentConfig, key: Option<&str>, body: &Value, cancel: Arc<Atom
     let mut req = http
         .post(&completions_url(&cfg.endpoint))
         .set("Content-Type", "application/json")
-        .set("User-Agent", concat!("omaweb/", env!("CARGO_PKG_VERSION")));
+        .set("User-Agent", concat!("qi/", env!("CARGO_PKG_VERSION")));
     if let Some(k) = key {
         req = req.set("Authorization", &format!("Bearer {k}"));
     }
@@ -313,8 +319,10 @@ mod tests {
     fn key_resolution_order_and_urls() {
         let mut c = cfg();
         c.api_key = "from-config".into();
-        let env = |k: &str| if k == "OMAWEB_AGENT_API_KEY" { Some("from-env".to_string()) } else { None };
-        assert_eq!(resolve_key(&c, &env), (Some("from-env".into()), KeySource::Env("OMAWEB_AGENT_API_KEY".into())));
+        let env = |k: &str| if k == "QI_AGENT_API_KEY" { Some("from-env".to_string()) } else { None };
+        assert_eq!(resolve_key(&c, &env), (Some("from-env".into()), KeySource::Env("QI_AGENT_API_KEY".into())));
+        let old = |k: &str| if k == "OMAWEB_AGENT_API_KEY" { Some("from-old".to_string()) } else { None };
+        assert_eq!(resolve_key(&c, &old), (Some("from-old".into()), KeySource::Env("OMAWEB_AGENT_API_KEY".into())));
         let none = |_: &str| None;
         assert_eq!(resolve_key(&c, &none).1, KeySource::Config);
         c.api_key.clear();

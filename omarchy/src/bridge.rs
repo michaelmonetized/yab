@@ -11,7 +11,7 @@ pub mod qobject {
         type QString = cxx_qt_lib::QString;
     }
 
-    #[namespace = "omaweb"]
+    #[namespace = "qi"]
     unsafe extern "C++" {
         include!("platform.h");
         fn init_webengine();
@@ -410,7 +410,7 @@ impl qobject::Browser {
         self.as_mut().set_initial_json(qs(&initial));
         self.as_mut().reload_theme();
 
-        // Single instance: later `omaweb <url>` calls land here.
+        // Single instance: later `qi <url>` calls land here.
         let qt = self.qt_thread();
         ipc::listen(move |url, private, profile| {
             let _ = qt.queue(move |mut b| {
@@ -792,7 +792,7 @@ impl qobject::Browser {
     }
 
     /// Qt WebEngine doesn't keep an extension's on/off across restarts, so
-    /// Omaweb keeps the ids switched off and turns the rest back on.
+    /// Qi keeps the ids switched off and turns the rest back on.
     pub fn disabled_extensions(&self, profile: &QString) -> QString {
         qs(&serde_json::to_string(&extensions::read_list(&disabled_file(&profile.to_string()))).unwrap_or_else(|_| "[]".into()))
     }
@@ -859,7 +859,7 @@ impl qobject::Browser {
                     Ok((logins, failed)) => {
                         report.insert("passwordsNotDecrypted".into(), json!(failed));
                         if !logins.is_empty() && !passwords::available() {
-                            notes.push(format!("{} passwords were decrypted but not kept: Omaweb keeps passwords only in the Secret Service, and secret-tool (libsecret) isn't installed.", logins.len()));
+                            notes.push(format!("{} passwords were decrypted but not kept: Qi keeps passwords only in the Secret Service, and secret-tool (libsecret) isn't installed.", logins.len()));
                             report.insert("passwords".into(), json!(0));
                         } else {
                             let store = passwords::Store::new(&profile, profiles::passwords_index_path(&profile));
@@ -935,7 +935,7 @@ impl qobject::Browser {
     /// Desktop notification through mako (Omarchy's notifier) via notify-send.
     pub fn notify(&self, summary: &QString, body: &QString) {
         let _ = std::process::Command::new("notify-send")
-            .args(["-a", "Omaweb", &summary.to_string(), &body.to_string()])
+            .args(["-a", "Qi", &summary.to_string(), &body.to_string()])
             .spawn();
     }
 }

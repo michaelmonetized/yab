@@ -1,16 +1,16 @@
 [Desktop Entry]
 Type=Application
-Name=Omaweb
+Name=Qi
 GenericName=Web Browser
 Comment=Keyboard-first, Omarchy-themed web browser
-Exec=omaweb %U
-Icon=omaweb
+Exec=qi %U
+Icon=qi
 Terminal=false
 Categories=Network;WebBrowser;
 MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
-StartupWMClass=omaweb
+StartupWMClass=qi
 Actions=new-window;
 
 [Desktop Action new-window]
 Name=New window
-Exec=omaweb --new
+Exec=qi --new
