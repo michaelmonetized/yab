@@ -235,14 +235,48 @@ fn listed(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
-/// Moves each missing child from `from` into `to`. A SQLite database and its
-/// `-wal`, `-shm` and `-journal` files move together or not at all. An
-/// existing file stays, and so does its copy in `from`, so a later launch
-/// can try again. `from` is removed only once nothing is left in it.
-/// Returns false when a destination was blocked.
-fn merge_dirs(from: &Path, to: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(from) else {
+/// Moves a SQLite database and its sidecars as one group. An interrupted
+/// move (the database is already at `to`, sidecars still in `from`) is
+/// finished. A sidecar already at `to` without the database is left alone
+/// so it is not paired with a different database.
+fn move_sqlite_group(from: &Path, to: &Path, base: &std::ffi::OsStr) -> bool {
+    let members = sqlite_members(base);
+    let src_main = listed(&from.join(&members[0]));
+    let dst_main = listed(&to.join(&members[0]));
+    let dst_side = members[1..].iter().any(|name| listed(&to.join(name)));
+    if src_main && dst_main {
         return true;
+    }
+    if src_main && !dst_main && dst_side {
+        return true;
+    }
+    let mut moved = Vec::new();
+    for name in &members {
+        let src = from.join(name);
+        let dst = to.join(name);
+        if !listed(&src) || listed(&dst) {
+            continue;
+        }
+        if !relocate(&src, &dst) {
+            for (src, dst) in moved.iter().rev() {
+                let _ = fs::rename(dst, src);
+            }
+            return false;
+        }
+        moved.push((src, dst));
+    }
+    true
+}
+
+/// Moves each missing child from `from` into `to`. A SQLite database and its
+/// `-wal`, `-shm` and `-journal` files move together. An existing file stays,
+/// and so does its copy in `from`, so a later launch can try again. `from`
+/// is removed only once nothing is left in it. Returns false when a
+/// destination was blocked or `from` could not be listed.
+fn merge_dirs(from: &Path, to: &Path) -> bool {
+    let entries = match fs::read_dir(from) {
+        Ok(entries) => entries,
+        Err(_) => return false,
     };
     let names: Vec<_> = entries
         .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
@@ -261,16 +295,7 @@ fn merge_dirs(from: &Path, to: &Path) -> bool {
             .iter()
             .any(|name| listed(&from.join(name)) || listed(&to.join(name)));
         if sidecars {
-            if members.iter().any(|name| listed(&to.join(name))) {
-                continue;
-            }
-            for name in &members {
-                let src = from.join(name);
-                if !listed(&src) {
-                    continue;
-                }
-                ok = relocate(&src, &to.join(name)) && ok;
-            }
+            ok = move_sqlite_group(from, to, &base) && ok;
             continue;
         }
         let src = from.join(&base);
@@ -576,6 +601,19 @@ mod tests {
             "legacy-wal"
         );
         assert!(!from.exists());
+    }
+
+    #[test]
+    fn finishes_an_interrupted_sqlite_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("omaweb");
+        let to = dir.path().join("qi");
+        write(&to.join("History"), "moved-db");
+        write(&from.join("History-wal"), "moved-wal");
+        move_if_absent(&from, &to);
+        assert_eq!(fs::read_to_string(to.join("History")).unwrap(), "moved-db");
+        assert_eq!(fs::read_to_string(to.join("History-wal")).unwrap(), "moved-wal");
+        assert!(!from.join("History-wal").exists());
     }
 
     #[test]
