@@ -104,17 +104,6 @@ bool ProfileRootBusy(const std::string& file) {
   return true;
 }
 
-bool Escapes(const fs::path& rel) {
-  if (rel.empty() || rel.is_absolute()) return true;
-  for (const auto& part : rel)
-    if (part == "..") return true;
-  return false;
-}
-
-fs::path LexicalRel(const fs::path& path, const fs::path& base) {
-  return path.lexically_normal().lexically_relative(base.lexically_normal());
-}
-
 struct StartupPref {
   std::string folder;
   std::string path;
@@ -242,6 +231,14 @@ void RecoverDeadManifests() {
 bool ReleaseOne(const std::string& profile) {
   const std::string hold = HoldDir(profile);
   if (!Exists(hold)) return true;
+  // Release runs before CefShutdown, while this process still holds the
+  // lock. LiveLockHolder ignores our own pid. A different live browser
+  // owns these files, so leave them aside.
+  if (ProfileRootBusy(profile + "/Current Session")) {
+    std::cerr << "qi-cef: leaving session files aside because another browser has "
+              << profile << "\n";
+    return false;
+  }
   bool ok = true;
   for (const char* name : kSessionNames) {
     const fs::path src = fs::path(hold) / name;
@@ -387,58 +384,72 @@ static bool Skip(const fs::path& rel) {
          f.find("BrowserMetrics") != std::string::npos;
 }
 
+bool CopyNode(const fs::path& src,
+              const fs::path& dest,
+              const fs::path& logical,
+              std::set<std::string>* seen,
+              std::string* error) {
+  if (Skip(logical)) return true;
+  std::error_code ec;
+  const fs::path canon = fs::weakly_canonical(src, ec);
+  if (!ec && !canon.empty() && !seen->insert(canon.string()).second) return true;
+  const auto st = fs::symlink_status(src, ec);
+  if (ec) {
+    *error = "stat " + src.string() + ": " + ec.message();
+    return false;
+  }
+  if (fs::is_symlink(st)) {
+    const fs::path target = fs::weakly_canonical(src, ec);
+    if (ec || target.empty()) {
+      *error = "symlink " + src.string() + " has no target";
+      return false;
+    }
+    return CopyNode(target, dest, logical, seen, error);
+  }
+  if (fs::is_directory(st)) {
+    if (!MakeDirs(dest.string())) {
+      *error = "can't create " + dest.string();
+      return false;
+    }
+    for (fs::directory_iterator it(src, ec); !ec && it != fs::directory_iterator();
+         it.increment(ec)) {
+      if (!CopyNode(it->path(), dest / it->path().filename(), logical / it->path().filename(),
+                    seen, error))
+        return false;
+    }
+    if (ec) {
+      *error = "walk " + src.string() + ": " + ec.message();
+      return false;
+    }
+    return true;
+  }
+  if (!fs::is_regular_file(st)) return true;
+  if (!MakeDirs(dest.parent_path().string())) {
+    *error = "can't create " + dest.parent_path().string();
+    return false;
+  }
+  fs::copy_file(src, dest, fs::copy_options::overwrite_existing, ec);
+  if (ec) {
+    *error = "copy " + dest.string() + ": " + ec.message();
+    return false;
+  }
+  return true;
+}
+
 bool CopyUserDataDir(const std::string& src,
                      const std::string& dest,
                      std::string* error) {
+  if (Inside(src, dest) || Inside(dest, src)) {
+    *error = "the copy would sit inside itself";
+    return false;
+  }
   if (!MakeDirs(dest)) {
     *error = "can't create " + dest;
     return false;
   }
   chmod(dest.c_str(), 0700);
-  std::error_code ec;
-  const fs::path base(src);
-  auto it = fs::recursive_directory_iterator(src, ec);
-  for (; !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-    const fs::path rel = LexicalRel(it->path(), base);
-    if (Escapes(rel)) {
-      *error = "refusing to copy " + it->path().string();
-      return false;
-    }
-    std::error_code se;
-    const auto st = it->symlink_status(se);
-    if (se) {
-      *error = "stat " + rel.string() + ": " + se.message();
-      return false;
-    }
-    if (Skip(rel)) {
-      if (fs::is_directory(st) && !fs::is_symlink(st)) it.disable_recursion_pending();
-      continue;
-    }
-    const fs::path out = fs::path(dest) / rel;
-    if (Escapes(LexicalRel(out, dest))) {
-      *error = "refusing to write " + out.string();
-      return false;
-    }
-    std::error_code e2;
-    if (fs::is_symlink(st)) {
-      it.disable_recursion_pending();
-      MakeDirs(out.parent_path().string());
-      fs::copy_symlink(it->path(), out, e2);
-    } else if (fs::is_directory(st)) {
-      if (!MakeDirs(out.string())) e2 = std::make_error_code(std::errc::permission_denied);
-    } else if (fs::is_regular_file(st)) {
-      MakeDirs(out.parent_path().string());
-      fs::copy_file(it->path(), out, fs::copy_options::overwrite_existing, e2);
-    }
-    if (e2) {
-      *error = "copy " + rel.string() + ": " + e2.message();
-      return false;
-    }
-  }
-  if (ec) {
-    *error = "walk " + src + ": " + ec.message();
-    return false;
-  }
+  std::set<std::string> seen;
+  if (!CopyNode(src, dest, fs::path(), &seen, error)) return false;
   chmod(dest.c_str(), 0700);
   return true;
 }
@@ -476,19 +487,34 @@ std::string SnapshotDirFor(const ChromeRoot& root) {
 }
 
 bool SnapshotClobbersSource(const std::string& source, const std::string& dest) {
-  return Inside(dest, source);
+  return Inside(dest, source) || Inside(source, dest);
 }
 
 bool SnapshotCanReuse(const std::string& data_dir, const std::string& source) {
   return Exists(data_dir + "/.complete") && MarkerMatches(data_dir, Canon(source), true);
 }
 
-void WriteSnapshotMarker(const std::string& data_dir,
+bool WriteSnapshotMarker(const std::string& data_dir,
                          const std::string& source,
                          const std::string& label) {
-  std::ofstream marker(data_dir + "/.complete");
+  const std::string path = data_dir + "/.complete";
+  std::ofstream marker(path, std::ios::trunc);
   marker << "source: " << Canon(source) << "\n"
          << "Copy made by Qi. It can miss writes if " << label << " was running.\n";
+  marker.flush();
+  if (!marker) {
+    std::error_code ec;
+    fs::remove(path, ec);
+    return false;
+  }
+  return true;
+}
+
+std::string AbsolutePath(const std::string& path) {
+  std::error_code ec;
+  fs::path abs = fs::absolute(fs::path(path), ec);
+  if (ec || abs.empty()) return path;
+  return abs.lexically_normal().string();
 }
 
 std::string BackupUserDataDir(const ChromeRoot& root, std::string* error) {

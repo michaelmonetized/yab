@@ -1,13 +1,10 @@
 // One CefClient for every browser: titles, loading, Qi's own links,
 // and the shortcuts Chrome's window does not already own.
-#include <fstream>
 #include <set>
 
 #include "include/cef_client.h"
-#include "include/cef_command_ids.h"
 #include "include/cef_parser.h"
-#include "include/cef_task.h"
-#include "include/views/cef_window.h"
+#include "keys.h"
 #include "qi.h"
 
 namespace qi {
@@ -46,143 +43,52 @@ std::string ProfileOf(CefRefPtr<CefBrowser> browser) {
   return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
-std::string CachePathOf(CefRefPtr<CefBrowser> browser) {
-  if (!browser || !browser->GetHost() || !browser->GetHost()->GetRequestContext())
-    return "";
-  return browser->GetHost()->GetRequestContext()->GetCachePath().ToString();
+std::set<std::string>& KeysDocuments() {
+  static std::set<std::string> docs;
+  return docs;
 }
 
-std::set<std::string>& ArmedProfiles() {
-  static std::set<std::string> armed;
-  return armed;
-}
-
-std::string ReadText(const std::string& path) {
-  std::ifstream in(path);
-  if (!in) return "";
-  return std::string(std::istreambuf_iterator<char>(in),
-                      std::istreambuf_iterator<char>());
-}
-
-bool PrefBool(CefRefPtr<CefDictionaryValue> dict, const char* key, bool fallback) {
-  if (!dict || !dict->HasKey(key) || dict->GetType(key) != VTYPE_BOOL) return fallback;
-  return dict->GetBool(key);
-}
-
-class ArmVerticalTabsTask : public CefTask {
- public:
-  ArmVerticalTabsTask(CefRefPtr<CefBrowser> browser,
-                      std::string profile,
-                      bool enable,
-                      bool hover,
-                      bool collapse,
-                      bool loaded,
-                      int attempt)
-      : browser_(browser),
-        profile_(std::move(profile)),
-        enable_(enable),
-        hover_(hover),
-        collapse_(collapse),
-        loaded_(loaded),
-        attempt_(attempt) {}
-
-  void Execute() override {
-    auto host = browser_ ? browser_->GetHost() : nullptr;
-    if (!host) {
-      ArmedProfiles().erase(profile_);
-      return;
-    }
-    if (!loaded_) {
-      auto root = CefParseJSON(ReadText(profile_ + "/Preferences"), JSON_PARSER_RFC);
-      CefRefPtr<CefDictionaryValue> tabs;
-      if (root && root->GetType() == VTYPE_DICTIONARY) {
-        auto dict = root->GetDictionary();
-        if (dict && dict->HasKey("vertical_tabs") &&
-            dict->GetType("vertical_tabs") == VTYPE_DICTIONARY)
-          tabs = dict->GetDictionary("vertical_tabs");
-      }
-      // Missing keys use Chromium's defaults: off, expand on hover, expanded.
-      enable_ = !PrefBool(tabs, "enabled", false);
-      hover_ = !PrefBool(tabs, "expand_on_hover", true);
-      collapse_ = !PrefBool(tabs, "collapsed_state", false);
-      loaded_ = true;
-    }
-    int id = 0;
-    if (enable_) id = IDC_TOGGLE_VERTICAL_TABS;
-    else if (hover_) id = IDC_TOGGLE_VERTICAL_TABS_EXPAND_ON_HOVER;
-    else if (collapse_) id = IDC_TOGGLE_VERTICAL_TABS_COLLAPSE;
-    else return;
-    if (!host->CanExecuteChromeCommand(id)) {
-      if (attempt_ < 20) {
-        Schedule(attempt_ + 1);
-        return;
-      }
-      if (id == IDC_TOGGLE_VERTICAL_TABS) enable_ = false;
-      else if (id == IDC_TOGGLE_VERTICAL_TABS_EXPAND_ON_HOVER) hover_ = false;
-      else collapse_ = false;
-      if (enable_ || hover_ || collapse_) Schedule(0);
-      return;
-    }
-    host->ExecuteChromeCommand(id, CEF_WOD_CURRENT_TAB);
-    if (id == IDC_TOGGLE_VERTICAL_TABS) enable_ = false;
-    else if (id == IDC_TOGGLE_VERTICAL_TABS_EXPAND_ON_HOVER) hover_ = false;
-    else collapse_ = false;
-    if (enable_ || hover_ || collapse_) Schedule(0);
-  }
-
- private:
-  void Schedule(int attempt) {
-    CefPostDelayedTask(TID_UI,
-                       new ArmVerticalTabsTask(browser_, profile_, enable_, hover_,
-                                               collapse_, loaded_, attempt),
-                       200);
-  }
-
-  CefRefPtr<CefBrowser> browser_;
-  std::string profile_;
-  bool enable_;
-  bool hover_;
-  bool collapse_;
-  bool loaded_;
-  int attempt_;
-  IMPLEMENT_REFCOUNTING(ArmVerticalTabsTask);
-};
-
-void ArmVerticalTabs(CefRefPtr<CefBrowser> browser) {
-  const std::string profile = CachePathOf(browser);
-  if (profile.empty() || !ArmedProfiles().insert(profile).second) return;
-  CefPostDelayedTask(TID_UI, new ArmVerticalTabsTask(browser, profile, false, false, false, false, 0),
-                     300);
-}
-
-bool HandleShortcut(CefRefPtr<CefBrowser> browser, int type, int key, uint32_t mods) {
+bool HandleShortcut(int type, int key, uint32_t mods) {
   if (type != KEYEVENT_RAWKEYDOWN) return false;
-  if ((mods & EVENTFLAG_CONTROL_DOWN) == 0) return false;
+  if (mods & EVENTFLAG_IS_REPEAT) return false;
+  const bool ctrl = mods & EVENTFLAG_CONTROL_DOWN;
   const bool shift = mods & EVENTFLAG_SHIFT_DOWN;
   const bool alt = mods & EVENTFLAG_ALT_DOWN;
-  const bool repeat = mods & EVENTFLAG_IS_REPEAT;
   if (key >= 'a' && key <= 'z') key -= 'a' - 'A';
-  if (!shift && !alt && (key == 'T' || key == 'N' || key == 'L' || key == 'W')) return false;
-  // Ctrl+Shift+L is Chrome's own pin for this sidebar. Leave it alone.
-  if (shift && !alt && key == 'M') {
-    if (!repeat) OpenProfilePicker();
+  if (ctrl && alt && !shift && key >= '1' && key <= '9') {
+    RunAction(std::string("space-") + static_cast<char>(key));
     return true;
   }
-  if (shift && !alt && key == 'X') {
-    if (!repeat) OpenWindow(ProfileOf(browser), "chrome://extensions/", true);
+  if (alt && !ctrl && !shift && key >= '1' && key <= '9') {
+    RunAction(std::string("tab-") + static_cast<char>(key));
     return true;
   }
-  if (!shift && !alt && key == 'Q') {
-    if (!repeat) CloseAllWindows();
-    return true;
-  }
-  if (!shift && alt && key >= '1' && key <= '9') {
-    if (!repeat) {
-      std::string dir = ProfileForSpace(key - '1');
-      if (!dir.empty()) OpenWindow(dir, "chrome://newtab/", false);
-    }
-    return true;
-  }
+  if (alt && !ctrl && !shift && key == 0x25) return RunAction("back");
+  if (alt && !ctrl && !shift && key == 0x27) return RunAction("forward");
+  if (alt && !ctrl && !shift && key == 'D') return RunAction("focus-location");
+  if (!ctrl) return false;
+  if (!shift && !alt && key == 'T') return RunAction("new-tab");
+  if (!shift && !alt && key == 'N') return RunAction("new-window");
+  if (!shift && !alt && key == 'W') return RunAction("close-tab");
+  if (!shift && !alt && key == 'L') return RunAction("focus-location");
+  if (!shift && !alt && key == 'Q') return RunAction("quit");
+  if (!shift && !alt && key == 'D') return RunAction("duplicate-tab");
+  if (!shift && !alt && key == 'F') return RunAction("find-in-page");
+  if (!shift && !alt && key == 'R') return RunAction("reload");
+  if (!shift && !alt && key == 'S') return RunAction("save-page");
+  if (!shift && !alt && key == 'P') return RunAction("print");
+  if (!shift && !alt && key == 'J') return RunAction("downloads");
+  if (!shift && !alt && key == 'U') return RunAction("view-source");
+  if (shift && !alt && key == 'B') return RunAction("toggle-sidebar");
+  if (shift && !alt && key == 'L') return RunAction("toggle-sidebar");
+  if (shift && !alt && key == 'T') return RunAction("restore-tab");
+  if (shift && !alt && key == 'R') return RunAction("reload-no-cache");
+  if (shift && !alt && key == 'M') return RunAction("profile-picker");
+  if (shift && !alt && key == 'X') return RunAction("extensions");
+  if (shift && !alt && key == 'U') return RunAction("show-extension-toolbar");
+  if (shift && !alt && key == 'I') return RunAction("devtools");
+  if (shift && key == 0x09) return RunAction("previous-tab");
+  if (!shift && key == 0x09) return RunAction("next-tab");
   return false;
 }
 
@@ -201,10 +107,7 @@ class Client : public CefClient,
   CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
   CefRefPtr<CefInputHandler> GetInputHandler() override { return this; }
 
-  void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
-    TrackBrowser(browser);
-    ArmVerticalTabs(browser);
-  }
+  void OnAfterCreated(CefRefPtr<CefBrowser> browser) override { TrackBrowser(browser); }
 
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override { ForgetBrowser(browser); }
 
@@ -212,31 +115,31 @@ class Client : public CefClient,
                      const CefKeyEvent& event,
                      CefEventHandle,
                      bool*) override {
-    return HandleShortcut(browser, event.type, event.windows_key_code, event.modifiers);
+    return HandleShortcut(event.type, event.windows_key_code, event.modifiers);
   }
 
-  bool OnPreKeyboardEvent(CefRefPtr<CefBrowser> browser,
+  bool OnPreKeyboardEvent(CefRefPtr<CefBrowser>,
                           const CefKeyboardInputEvent& event,
                           const CefInputEventContext&,
                           bool*) override {
-    return HandleShortcut(browser, event.type, event.windows_key_code, event.modifiers);
+    return HandleShortcut(event.type, event.windows_key_code, event.modifiers);
   }
 
-  void OnTitleChange(CefRefPtr<CefBrowser> browser,
-                     const CefString& title) override {
-    auto view = CefBrowserView::GetForBrowser(browser);
-    if (!view) return;
-    if (auto window = view->GetWindow()) {
-      const std::string profile = ProfileLabel(ProfileOf(browser));
-      window->SetTitle(title.ToString() + ": Qi · " + profile);
-    }
+  void OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString& title) override {
+    NotePage(browser, title, "");
   }
 
-  void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
-                            bool loading,
-                            bool,
-                            bool) override {
-    if (loading) OnBrowserLoading(browser);
+  void OnAddressChange(CefRefPtr<CefBrowser> browser,
+                       CefRefPtr<CefFrame> frame,
+                       const CefString& url) override {
+    if (!frame || !frame->IsMain()) return;
+    NotePage(browser, "", url);
+  }
+
+  void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool loading, bool, bool) override {
+    if (!loading) return;
+    OnBrowserLoading(browser);
+    NoteLoad(browser);
   }
 
   bool RunPickerCommand(CefRefPtr<CefBrowser> browser,
@@ -274,6 +177,20 @@ class Client : public CefClient,
                       bool is_redirect) override {
     const std::string url = request->GetURL();
     if (url.rfind(kCommandPrefix, 0) != 0) return false;
+    if (!is_redirect && user_gesture && frame && frame->IsMain() &&
+        IsKeysDocument(frame->GetURL().ToString())) {
+      std::string rest = url.substr(sizeof(kCommandPrefix) - 1);
+      auto q = rest.find('?');
+      const std::string cmd = rest.substr(0, q);
+      const std::string query = q == std::string::npos ? "" : rest.substr(q + 1);
+      if (cmd == "set-key") {
+        std::string action = Param(query, "action");
+        std::string chord = Param(query, "chord");
+        if (!action.empty()) SetKeyOverride(KeysPath(), action, chord);
+        ReloadKeyMap();
+        return true;
+      }
+    }
     RunPickerCommand(browser, frame, url, user_gesture, is_redirect);
     return true;  // never actually navigate to qi.invalid
   }
@@ -283,7 +200,7 @@ class Client : public CefClient,
                      int,
                      const CefString& target_url,
                      const CefString&,
-                     CefLifeSpanHandler::WindowOpenDisposition,
+                     CefLifeSpanHandler::WindowOpenDisposition disposition,
                      bool user_gesture,
                      const CefPopupFeatures&,
                      CefWindowInfo&,
@@ -292,9 +209,30 @@ class Client : public CefClient,
                      CefRefPtr<CefDictionaryValue>&,
                      bool*) override {
     const std::string url = target_url;
-    if (url.rfind(kCommandPrefix, 0) != 0) return false;
-    RunPickerCommand(browser, frame, url, user_gesture, false);
-    return true;
+    if (url.rfind(kCommandPrefix, 0) == 0) {
+      RunPickerCommand(browser, frame, url, user_gesture, false);
+      return true;
+    }
+    if (url.rfind("chrome-extension://", 0) == 0 || disposition == CEF_WOD_NEW_POPUP)
+      return false;
+    if (disposition == CEF_WOD_NEW_WINDOW) {
+      OpenFreshWindow(ProfileOf(browser), url, false, false);
+      return true;
+    }
+    if (disposition == CEF_WOD_OFF_THE_RECORD) {
+      OpenFreshWindow(ProfileOf(browser), url, false, true);
+      return true;
+    }
+    if (disposition == CEF_WOD_NEW_BACKGROUND_TAB) {
+      if (!OpenAsTab(browser, url, true)) OpenFreshWindow(ProfileOf(browser), url, false, false);
+      return true;
+    }
+    if (disposition == CEF_WOD_NEW_FOREGROUND_TAB || disposition == CEF_WOD_SINGLETON_TAB ||
+        disposition == CEF_WOD_SWITCH_TO_TAB) {
+      if (!OpenAsTab(browser, url, false)) OpenFreshWindow(ProfileOf(browser), url, false, false);
+      return true;
+    }
+    return false;
   }
 
  private:
@@ -311,5 +249,9 @@ CefRefPtr<CefClient> SharedClient() {
 void RememberPickerDocument(const std::string& url) { PickerDocuments().insert(url); }
 
 bool IsPickerDocument(const std::string& url) { return PickerDocuments().count(url) != 0; }
+
+void RememberKeysDocument(const std::string& url) { KeysDocuments().insert(url); }
+
+bool IsKeysDocument(const std::string& url) { return KeysDocuments().count(url) != 0; }
 
 }  // namespace qi

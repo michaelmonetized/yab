@@ -3,7 +3,7 @@ Type=Application
 Name=Qi (CEF)
 GenericName=Web Browser
 Comment=Qi on Chromium, with Chrome extensions and your real Chrome profiles
-Exec=qi-cef %U
+Exec=qi-cef --browser=qi %U
 Icon=qi
 Terminal=false
 Categories=Network;WebBrowser;

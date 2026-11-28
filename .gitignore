@@ -72,6 +72,12 @@ credentials*.json
 secrets*.toml
 .netrc
 
+# QEMU core dumps from a CEF build. Never commit these.
+/qemu_*.core
+
+# Scratch browser profiles from a local QA run. Never commit these.
+/.qa-*
+
 # Qi app state if a dev run points XDG dirs into the tree.
 /omarchy/.state/
 *.sock

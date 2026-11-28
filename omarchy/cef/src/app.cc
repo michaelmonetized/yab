@@ -3,6 +3,7 @@
 #include <map>
 #include <sstream>
 
+#include "features.h"
 #include "include/cef_app.h"
 #include "include/cef_browser_process_handler.h"
 #include "qi.h"
@@ -81,9 +82,13 @@ class App : public CefApp, public CefBrowserProcessHandler {
     for (const char* key : {"enable-features", "disable-features", "load-extension"})
       lists[key] = cl->HasSwitch(key) ? cl->GetSwitchValue(key).ToString() : "";
     ForwardFlagsFile(ActiveRoot().flags_file, cl, &lists);
+    lists["enable-features"] = WithOverlayScrollbars(lists["enable-features"]);
+    // One write each. A second --disable-features crashes Chromium.
     for (auto& [key, value] : lists) {
-      if (!value.empty() && (!cl->HasSwitch(key) || cl->GetSwitchValue(key).ToString() != value))
-        cl->AppendSwitchWithValue(key, value);
+      if (value.empty()) continue;
+      if (cl->HasSwitch(key) && cl->GetSwitchValue(key).ToString() == value) continue;
+      cl->RemoveSwitch(key);
+      cl->AppendSwitchWithValue(key, value);
     }
   }
 

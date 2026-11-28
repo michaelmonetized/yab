@@ -24,7 +24,7 @@ exec_path="$PREFIX/bin/qi-cef"
 escaped=${exec_path//\\/\\\\}
 escaped=${escaped//\"/\\\"}
 awk -v exec="$escaped" '
-  /^Exec=/ { print "Exec=\"" exec "\" %U"; next }
+  /^Exec=/ { print "Exec=\"" exec "\" --browser=qi %U"; next }
   { print }
 ' "$here/../data/qi-cef.desktop" > "$PREFIX/share/applications/qi-cef.desktop"
 chmod 644 "$PREFIX/share/applications/qi-cef.desktop"

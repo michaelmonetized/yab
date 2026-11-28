@@ -20,6 +20,7 @@ if(NOT EXISTS "${CEF_ROOT}/cmake/FindCEF.cmake")
 endif()
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CEF_ROOT}/cmake")
 find_package(CEF REQUIRED)
+find_package(SQLite3 REQUIRED)
 add_subdirectory(${CEF_LIBCEF_DLL_WRAPPER_PATH} libcef_dll_wrapper)
 
 set(QI_SRCS
@@ -27,9 +28,12 @@ set(QI_SRCS
   src/app.cc
   src/client.cc
   src/window.cc
+  src/shell.cc
   src/profiles.cc
   src/theme.cc
   src/safety.cc
+  src/keys.cc
+  src/features.cc
   )
 
 set(CEF_TARGET qi-cef)
@@ -39,7 +43,10 @@ add_executable(${CEF_TARGET} ${QI_SRCS})
 SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
 target_include_directories(${CEF_TARGET} PRIVATE "${CEF_ROOT}")
 add_dependencies(${CEF_TARGET} libcef_dll_wrapper)
-target_link_libraries(${CEF_TARGET} libcef_lib libcef_dll_wrapper ${CEF_STANDARD_LIBS})
+target_link_libraries(${CEF_TARGET} libcef_lib libcef_dll_wrapper ${CEF_STANDARD_LIBS} SQLite3::SQLite3)
+
+add_executable(qi-check src/qi_check.cc src/keys.cc src/features.cc)
+target_compile_features(qi-check PRIVATE cxx_std_17)
 set_target_properties(${CEF_TARGET} PROPERTIES INSTALL_RPATH "$ORIGIN" BUILD_WITH_INSTALL_RPATH TRUE)
 
 COPY_FILES("${CEF_TARGET}" "${CEF_BINARY_FILES}" "${CEF_BINARY_DIR}" "${CEF_TARGET_OUT_DIR}")

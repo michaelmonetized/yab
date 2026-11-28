@@ -1,29 +1,15 @@
-// Qi's window around a Chrome browser.
-//
-// The top-level window is Chrome's own, so the tab strip is real. Tabs sit
-// on a vertical sidebar: collapsed until the pointer reaches the left edge,
-// pinned open with Ctrl+Shift+L. Ctrl+T opens a tab here. Ctrl+N opens a
-// window. The address bar stays up, and Ctrl+L focuses it.
-//
-// A CefBrowserView window is a popup in this CEF build, and a popup has no
-// tab strip. That path remains for a popup that asks for its own view.
+// Profile picker, process spawn, and the list of open windows.
+// The window itself lives in shell.cc.
 #include <spawn.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cstring>
 #include <fstream>
-#include <map>
 #include <sstream>
 
 #include "include/cef_app.h"
-#include "include/cef_command_ids.h"
 #include "include/cef_parser.h"
-#include "include/cef_task.h"
-#include "include/views/cef_box_layout.h"
-#include "include/views/cef_button.h"
-#include "include/views/cef_panel.h"
-#include "include/views/cef_textfield.h"
 #include "include/views/cef_window.h"
 #include "include/wrapper/cef_helpers.h"
 #include "qi.h"
@@ -32,26 +18,6 @@ extern char** environ;
 
 namespace qi {
 namespace {
-
-enum Command {
-  kFocusLocation = 1001,
-  kTogglePinnedToolbar,
-  kNewWindow,
-  kNewWindow2,
-  kCloseWindow,
-  kProfilePicker,
-  kExtensions,
-  kQuit,
-  kSpace1 = 1100,  // ..1108
-};
-
-constexpr int kVkeyB = 'B', kVkeyL = 'L', kVkeyM = 'M', kVkeyN = 'N',
-              kVkeyQ = 'Q', kVkeyT = 'T', kVkeyW = 'W', kVkeyX = 'X';
-
-struct ToolbarState {
-  bool pinned = false;
-  bool transient = false;
-};
 
 std::vector<CefRefPtr<CefWindow>>& Windows() {
   static std::vector<CefRefPtr<CefWindow>> w;
@@ -67,277 +33,6 @@ void QuitIfIdle() {
   if (!Windows().empty() || !Browsers().empty()) return;
   RestoreOpenStartupPrefs();
   CefQuitMessageLoop();
-}
-
-std::map<int, ToolbarState>& Toolbars() {
-  static std::map<int, ToolbarState> m;
-  return m;
-}
-
-void ShowToolbar(CefRefPtr<CefBrowserView> view, bool visible) {
-  if (!view) return;
-  auto toolbar = view->GetChromeToolbar();
-  if (!toolbar || toolbar->IsVisible() == visible) return;
-  toolbar->SetVisible(visible);
-  if (auto window = view->GetWindow()) window->Layout();
-}
-
-int LocationScore(CefRefPtr<CefView> view) {
-  if (!view) return 0;
-  if (view->AsTextfield()) return 80;
-  const std::string type = view->GetTypeString();
-  if (type.find("Omnibox") != std::string::npos) return 100;
-  if (type.find("LocationBar") != std::string::npos) return 70;
-  if (type.find("Textfield") != std::string::npos) return 80;
-  return 0;
-}
-
-void Consider(CefRefPtr<CefView> view,
-              CefRefPtr<CefView>* best,
-              int* best_score,
-              CefRefPtr<CefView>* widest,
-              int* widest_px) {
-  if (!view) return;
-  int score = LocationScore(view);
-  if (score > *best_score) {
-    *best_score = score;
-    *best = view;
-  }
-  if (view->IsFocusable() && !view->AsButton() && view->GetBounds().width > *widest_px) {
-    *widest_px = view->GetBounds().width;
-    *widest = view;
-  }
-  if (auto panel = view->AsPanel()) {
-    for (size_t i = 0; i < panel->GetChildViewCount(); ++i)
-      Consider(panel->GetChildViewAt(i), best, best_score, widest, widest_px);
-  }
-}
-
-// chrome/browser/ui/view_ids.h in Chromium 158. The toolbar is reparented
-// out of the BrowserView, so Chrome's own focus command never sees this
-// text field. The id is stable for this CEF pin.
-constexpr int kOmniboxViewId = 1012;
-
-CefRefPtr<CefView> FindOmnibox(CefRefPtr<CefBrowserView> view) {
-  if (!view) return nullptr;
-  if (auto toolbar = view->GetChromeToolbar()) {
-    if (auto found = toolbar->GetViewForID(kOmniboxViewId)) return found;
-  }
-  if (auto window = view->GetWindow()) return window->GetViewForID(kOmniboxViewId);
-  return nullptr;
-}
-
-void FocusOmnibox(CefRefPtr<CefBrowserView> view) {
-  if (!view) return;
-  ShowToolbar(view, true);
-  if (auto window = view->GetWindow()) {
-    window->Layout();
-    window->Activate();
-  }
-  auto target = FindOmnibox(view);
-  if (!target) {
-    CefRefPtr<CefView> best;
-    CefRefPtr<CefView> widest;
-    int best_score = 0;
-    int widest_px = 0;
-    Consider(view->GetChromeToolbar(), &best, &best_score, &widest, &widest_px);
-    target = best_score > 0 ? best : widest;
-  }
-  if (target) {
-    target->RequestFocus();
-    if (auto field = target->AsTextfield()) field->SelectAll(false);
-    return;
-  }
-  if (auto browser = view->GetBrowser()) {
-    browser->GetHost()->ExecuteChromeCommand(IDC_FOCUS_LOCATION, CEF_WOD_CURRENT_TAB);
-  }
-}
-
-class FocusOmniboxTask : public CefTask {
- public:
-  explicit FocusOmniboxTask(CefRefPtr<CefBrowserView> view) : view_(view) {}
-  void Execute() override { FocusOmnibox(view_); }
-
- private:
-  CefRefPtr<CefBrowserView> view_;
-  IMPLEMENT_REFCOUNTING(FocusOmniboxTask);
-};
-
-class ViewDelegate : public CefBrowserViewDelegate {
- public:
-  explicit ViewDelegate(std::string profile, bool toolbar)
-      : profile_(std::move(profile)), toolbar_(toolbar) {}
-
-  ChromeToolbarType GetChromeToolbarType(CefRefPtr<CefBrowserView>) override {
-    return CEF_CTT_NORMAL;
-  }
-  cef_runtime_style_t GetBrowserRuntimeStyle() override {
-    return CEF_RUNTIME_STYLE_CHROME;
-  }
-
-  void OnBrowserCreated(CefRefPtr<CefBrowserView>,
-                        CefRefPtr<CefBrowser> browser) override {
-    Toolbars()[browser->GetIdentifier()].pinned = toolbar_;
-  }
-  void OnBrowserDestroyed(CefRefPtr<CefBrowserView>,
-                          CefRefPtr<CefBrowser> browser) override {
-    Toolbars().erase(browser->GetIdentifier());
-  }
-
-  CefRefPtr<CefBrowserViewDelegate> GetDelegateForPopupBrowserView(
-      CefRefPtr<CefBrowserView>,
-      const CefBrowserSettings&,
-      CefRefPtr<CefClient>,
-      bool is_devtools) override {
-    return new ViewDelegate(profile_, false);
-  }
-
-  bool OnPopupBrowserViewCreated(CefRefPtr<CefBrowserView>,
-                                 CefRefPtr<CefBrowserView> popup,
-                                 bool is_devtools) override;
-
- private:
-  std::string profile_;
-  bool toolbar_;
-  IMPLEMENT_REFCOUNTING(ViewDelegate);
-};
-
-class WindowDelegate : public CefWindowDelegate {
- public:
-  WindowDelegate(CefRefPtr<CefBrowserView> view, bool toolbar)
-      : view_(view), toolbar_(toolbar) {}
-
-  void OnWindowCreated(CefRefPtr<CefWindow> window) override {
-    const Theme& t = CurrentTheme();
-    CefBoxLayoutSettings s;
-    s.horizontal = false;
-    auto layout = window->SetToBoxLayout(s);
-    window->AddChildView(view_);
-    layout->SetFlexForView(view_, 1);
-    // The Chrome toolbar can only be fetched once the view is in a window.
-    if (auto toolbar = view_->GetChromeToolbar()) {
-      window->AddChildViewAt(toolbar, 0);
-      layout->SetFlexForView(toolbar, 0);
-      toolbar->SetVisible(toolbar_);
-    }
-    window->SetBackgroundColor(t.background);
-    window->SetTitle("Qi");
-
-    window->SetAccelerator(kFocusLocation, kVkeyL, false, true, false, true);
-    window->SetAccelerator(kTogglePinnedToolbar, kVkeyB, true, true, false, true);
-    window->SetAccelerator(kNewWindow2, kVkeyN, false, true, false, true);
-    window->SetAccelerator(kCloseWindow, kVkeyW, false, true, false, true);
-    window->SetAccelerator(kProfilePicker, kVkeyM, true, true, false, true);
-    window->SetAccelerator(kExtensions, kVkeyX, true, true, false, true);
-    window->SetAccelerator(kQuit, kVkeyQ, false, true, false, true);
-    for (int i = 0; i < 9; ++i)
-      window->SetAccelerator(kSpace1 + i, '1' + i, false, true, true, true);
-
-    Windows().push_back(window);
-    window->Show();
-    view_->RequestFocus();
-  }
-
-  void OnWindowDestroyed(CefRefPtr<CefWindow> window) override {
-    auto& w = Windows();
-    w.erase(std::remove_if(w.begin(), w.end(),
-                           [&](auto& x) { return x->IsSame(window); }),
-            w.end());
-    view_ = nullptr;
-    QuitIfIdle();
-  }
-
-  bool CanClose(CefRefPtr<CefWindow>) override {
-    auto browser = view_ ? view_->GetBrowser() : nullptr;
-    return browser ? browser->GetHost()->TryCloseBrowser() : true;
-  }
-
-  bool IsFrameless(CefRefPtr<CefWindow>) override { return true; }
-
-  cef_runtime_style_t GetWindowRuntimeStyle() override {
-    return CEF_RUNTIME_STYLE_CHROME;
-  }
-
-  bool GetLinuxWindowProperties(CefRefPtr<CefWindow>,
-                                CefLinuxWindowProperties& p) override {
-    CefString(&p.wayland_app_id) = "qi-cef";
-    CefString(&p.wm_class_class) = "qi-cef";
-    CefString(&p.wm_class_name) = "qi-cef";
-    return true;
-  }
-
-  bool OnAccelerator(CefRefPtr<CefWindow> window, int id) override {
-    auto browser = view_ ? view_->GetBrowser() : nullptr;
-    const std::string profile =
-        browser ? ProfileDirOf(browser) : StartupProfile();
-    switch (id) {
-      case kFocusLocation:
-        if (browser) Toolbars()[browser->GetIdentifier()].transient = true;
-        ShowToolbar(view_, true);
-        FocusOmnibox(view_);
-        CefPostDelayedTask(TID_UI, new FocusOmniboxTask(view_), 50);
-        return true;
-      case kTogglePinnedToolbar: {
-        if (!browser) return true;
-        auto& st = Toolbars()[browser->GetIdentifier()];
-        st.pinned = !st.pinned;
-        st.transient = false;
-        ShowToolbar(view_, st.pinned);
-        if (browser->GetHost()->CanExecuteChromeCommand(IDC_TOGGLE_VERTICAL_TABS_COLLAPSE))
-          browser->GetHost()->ExecuteChromeCommand(IDC_TOGGLE_VERTICAL_TABS_COLLAPSE,
-                                                   CEF_WOD_CURRENT_TAB);
-        return true;
-      }
-      case kNewWindow:
-        if (browser && browser->GetHost()->CanExecuteChromeCommand(IDC_NEW_TAB)) {
-          browser->GetHost()->ExecuteChromeCommand(IDC_NEW_TAB, CEF_WOD_NEW_FOREGROUND_TAB);
-          return true;
-        }
-        OpenWindow(profile, "chrome://newtab/", true);
-        return true;
-      case kNewWindow2:
-        OpenWindow(profile, "chrome://newtab/", true);
-        return true;
-      case kCloseWindow:
-        window->Close();
-        return true;
-      case kProfilePicker:
-        OpenProfilePicker();
-        return true;
-      case kExtensions:
-        OpenWindow(profile, "chrome://extensions/", true);
-        return true;
-      case kQuit:
-        CloseAllWindows();
-        return true;
-      default:
-        if (id >= kSpace1 && id < kSpace1 + 9) {
-          std::string dir = ProfileForSpace(id - kSpace1);
-          if (!dir.empty()) OpenWindow(dir, "chrome://newtab/", false);
-          return true;
-        }
-    }
-    return false;
-  }
-
-  static std::string ProfileDirOf(CefRefPtr<CefBrowser> browser) {
-    std::string path =
-        browser->GetHost()->GetRequestContext()->GetCachePath().ToString();
-    auto slash = path.find_last_of('/');
-    return slash == std::string::npos ? path : path.substr(slash + 1);
-  }
-
- private:
-  CefRefPtr<CefBrowserView> view_;
-  bool toolbar_;
-  IMPLEMENT_REFCOUNTING(WindowDelegate);
-};
-
-bool ViewDelegate::OnPopupBrowserViewCreated(CefRefPtr<CefBrowserView>,
-                                             CefRefPtr<CefBrowserView> popup,
-                                             bool is_devtools) {
-  CefWindow::CreateTopLevelWindow(new WindowDelegate(popup, false));
-  return true;
 }
 
 std::string Escape(const std::string& s) {
@@ -376,20 +71,20 @@ std::string Avatar(const ChromeProfile& p, const Theme& t) {
 
 }  // namespace
 
-void OpenWindow(const std::string& profile_dir,
-                const std::string& url,
-                bool) {
-  CEF_REQUIRE_UI_THREAD();
-  const Theme& t = CurrentTheme();
-  CefWindowInfo info;
-  info.runtime_style = CEF_RUNTIME_STYLE_CHROME;
-  info.bounds = {0, 0, 1280, 800};
-  CefString(&info.window_name) = "Qi";
-  CefBrowserSettings bs;
-  bs.background_color = t.background;
-  CefBrowserHost::CreateBrowser(info, SharedClient(),
-                                url.empty() ? "chrome://newtab/" : url, bs,
-                                nullptr, ContextFor(profile_dir));
+void RememberWindow(CefRefPtr<CefWindow> window) {
+  if (!window) return;
+  auto& all = Windows();
+  for (auto& have : all)
+    if (have->IsSame(window)) return;
+  all.push_back(window);
+}
+
+void ForgetWindow(CefRefPtr<CefWindow> window) {
+  auto& all = Windows();
+  all.erase(std::remove_if(all.begin(), all.end(),
+                           [&](auto& have) { return have->IsSame(window); }),
+            all.end());
+  QuitIfIdle();
 }
 
 void TrackBrowser(CefRefPtr<CefBrowser> browser) {
@@ -408,19 +103,14 @@ void ForgetBrowser(CefRefPtr<CefBrowser> browser) {
   QuitIfIdle();
 }
 
-void OnBrowserLoading(CefRefPtr<CefBrowser> browser) {
-  auto it = Toolbars().find(browser->GetIdentifier());
-  if (it == Toolbars().end() || !it->second.transient) return;
-  it->second.transient = false;
-  if (!it->second.pinned) ShowToolbar(CefBrowserView::GetForBrowser(browser), false);
-}
+void OnBrowserLoading(CefRefPtr<CefBrowser>) {}
 
 void CloseAllWindows() {
   auto browsers = Browsers();
-  for (auto& b : browsers)
-    if (b->GetHost()) b->GetHost()->CloseBrowser(true);
+  for (auto& browser : browsers)
+    if (browser->GetHost()) browser->GetHost()->CloseBrowser(true);
   auto views = Windows();
-  for (auto& w : views) w->Close();
+  for (auto& window : views) window->Close();
 }
 
 void OpenProfilePicker() {
@@ -482,23 +172,35 @@ void OpenProfilePicker() {
 }
 
 void SpawnFor(const std::string& root_id, const std::string& profile_dir) {
-  char exe[4096];
-  ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-  if (n <= 0) {
-    Tell("couldn't find qi-cef to open " + root_id);
-    return;
+  std::string exe = HomeDir() + "/.local/bin/qi-cef";
+  if (access(exe.c_str(), X_OK) != 0) {
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) {
+      Tell("couldn't find qi-cef to open " + root_id);
+      return;
+    }
+    buf[n] = 0;
+    exe = buf;
   }
-  exe[n] = 0;
   std::string a1 = "--browser=" + root_id;
   std::string a2 = "--profile-directory=" + profile_dir;
-  char* argv[] = {exe, a1.data(), a2.data(), nullptr};
+  char* argv[] = {exe.data(), a1.data(), a2.data(), nullptr};
   pid_t pid = 0;
-  int rc = posix_spawn(&pid, exe, nullptr, nullptr, argv, environ);
+  int rc = posix_spawn(&pid, exe.c_str(), nullptr, nullptr, argv, environ);
   if (rc != 0) Tell("couldn't start " + root_id + ": " + strerror(rc));
 }
 
 void HandleCommandLine(CefRefPtr<CefCommandLine> cl) {
   CEF_REQUIRE_UI_THREAD();
+  if (cl->HasSwitch("command")) {
+    RunAction(cl->GetSwitchValue("command"));
+    std::vector<CefString> args;
+    cl->GetArguments(args);
+    bool extra = cl->HasSwitch("picker") || cl->HasSwitch("extensions") ||
+                 cl->HasSwitch("install-extension");
+    if (args.empty() && !extra) return;
+  }
   if (cl->HasSwitch("picker")) {
     OpenProfilePicker();
     return;
@@ -528,7 +230,7 @@ void HandleCommandLine(CefRefPtr<CefCommandLine> cl) {
     std::string url = a;
     if (url.find("://") == std::string::npos && url.rfind("data:", 0) != 0 &&
         url.rfind("about:", 0) != 0) {
-      if (url[0] == '/' ) url = "file://" + url;
+      if (url[0] == '/') url = "file://" + url;
       else if (url.find('.') != std::string::npos && url.find(' ') == std::string::npos)
         url = "https://" + url;
     }

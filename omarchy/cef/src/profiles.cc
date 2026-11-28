@@ -12,6 +12,7 @@
 // each profile folder as a request context, so the profile itself is live.
 #include <dirent.h>
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -158,23 +159,23 @@ static bool RemoveStub(const std::string& path) {
   return rmdir(path.c_str()) == 0;
 }
 
-static void MergeDirs(const std::string& from, const std::string& to);
+static bool MergeDirs(const std::string& from, const std::string& to);
 
-static void Relocate(const std::string& from, const std::string& to) {
+static bool Relocate(const std::string& from, const std::string& to) {
   auto slash = to.find_last_of('/');
   if (slash != std::string::npos) {
     std::string parent = to.substr(0, slash);
     if (!CreationBlocked(parent)) MakeDirs(parent);
   }
-  if (renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0) return;
-  if (errno == ENOENT) return;
+  if (renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0) return true;
+  if (errno == ENOENT) return true;
   if ((errno == EEXIST || errno == ENOTEMPTY) && RealDir(from) && RealDir(to)) {
-    MergeDirs(from, to);
-    return;
+    return MergeDirs(from, to);
   }
   std::cerr << "qi-cef: couldn't move " << from << " to " << to << ": " << strerror(errno)
             << "\n";
   if (Exists(from) && !Exists(to)) BlockedDirs().push_back(to);
+  return false;
 }
 
 static bool SidecarBase(const std::string& name, std::string* base) {
@@ -190,12 +191,38 @@ static bool SidecarBase(const std::string& name, std::string* base) {
 }
 
 // Moves each missing child. A SQLite database and its -wal, -shm and -journal
-// files move together or not at all: if any of them is already at `to`, the
-// whole group stays in `from`. An existing file stays, and so does its copy
-// in `from`, so a later launch can try again. `from` is removed only when empty.
-static void MergeDirs(const std::string& from, const std::string& to) {
+// files move together. A crash halfway through is finished on the next
+// launch when the destination already has the database and the source only
+// has sidecars. A sidecar that is already at the destination without the
+// database stays put, so a foreign -wal is not paired with this database.
+// `from` is removed only when empty.
+static bool MoveSqliteGroup(const std::string& from, const std::string& to, const std::string& base) {
+  const std::string members[] = {base, base + "-wal", base + "-shm", base + "-journal"};
+  const bool src_main = Listed(from + "/" + base);
+  const bool dst_main = Listed(to + "/" + base);
+  bool dst_side = false;
+  for (int i = 1; i < 4; ++i) dst_side = dst_side || Listed(to + "/" + members[i]);
+  if (src_main && dst_main) return true;
+  if (src_main && !dst_main && dst_side) return true;
+  std::vector<std::pair<std::string, std::string>> moved;
+  for (auto& member : members) {
+    const std::string src = from + "/" + member;
+    const std::string dst = to + "/" + member;
+    if (!Listed(src) || Listed(dst)) continue;
+    if (!Relocate(src, dst)) {
+      for (auto it = moved.rbegin(); it != moved.rend(); ++it) {
+        renameat2(AT_FDCWD, it->second.c_str(), AT_FDCWD, it->first.c_str(), 0);
+      }
+      return false;
+    }
+    moved.emplace_back(src, dst);
+  }
+  return true;
+}
+
+static bool MergeDirs(const std::string& from, const std::string& to) {
   DIR* d = opendir(from.c_str());
-  if (!d) return;
+  if (!d) return false;
   std::vector<std::string> kids;
   while (dirent* ent = readdir(d)) {
     if (Dot(ent->d_name)) continue;
@@ -214,38 +241,31 @@ static void MergeDirs(const std::string& from, const std::string& to) {
   }
 
   static const char* suffixes[] = {"-wal", "-shm", "-journal"};
+  bool ok = true;
   for (auto& base : bases) {
     bool sidecars = false;
     for (const char* suffix : suffixes) {
       const std::string side = base + suffix;
       if (Listed(from + "/" + side) || Listed(to + "/" + side)) sidecars = true;
     }
-    const std::string members[] = {base, base + "-wal", base + "-shm", base + "-journal"};
     if (sidecars) {
-      bool collision = false;
-      for (auto& member : members)
-        if (Listed(to + "/" + member)) collision = true;
-      if (collision) continue;
-      for (auto& member : members) {
-        const std::string src = from + "/" + member;
-        if (!Listed(src)) continue;
-        Relocate(src, to + "/" + member);
-      }
+      ok = MoveSqliteGroup(from, to, base) && ok;
       continue;
     }
     const std::string src = from + "/" + base;
     const std::string dst = to + "/" + base;
     if (!Listed(src)) continue;
     if (!Listed(dst)) {
-      Relocate(src, dst);
+      ok = Relocate(src, dst) && ok;
     } else if (RealDir(src) && RealDir(dst)) {
       if (StubDir(dst) && RemoveStub(dst))
-        Relocate(src, dst);
+        ok = Relocate(src, dst) && ok;
       else if (RealDir(dst))
-        MergeDirs(src, dst);
+        ok = MergeDirs(src, dst) && ok;
     }
   }
   rmdir(from.c_str());
+  return ok;
 }
 
 static void MoveIfAbsent(const std::string& from, const std::string& to) {
@@ -263,6 +283,21 @@ static void MoveIfAbsent(const std::string& from, const std::string& to) {
 }
 
 void MigrateLegacyDirs() {
+  MakeDirs(StateDir());
+  const std::string lock_path = StateDir() + "/migrate.lock";
+  int lock = ::open(lock_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+  if (lock >= 0) {
+    bool got = false;
+    for (int i = 0; i < 600 && !got; ++i) {
+      if (flock(lock, LOCK_EX | LOCK_NB) == 0) got = true;
+      else usleep(50000);
+    }
+    if (!got) {
+      std::cerr << "qi-cef: another launch is still moving the old folders\n";
+      ::close(lock);
+      return;
+    }
+  }
   const std::string cfg = Xdg("XDG_CONFIG_HOME", ".config");
   const std::string data = Xdg("XDG_DATA_HOME", ".local/share");
   const std::string state = Xdg("XDG_STATE_HOME", ".local/state");
@@ -279,6 +314,7 @@ void MigrateLegacyDirs() {
     for (auto& [from, to] : pairs) {
       if (Exists(from) && !Exists(to)) BlockedDirs().push_back(to);
     }
+    if (lock >= 0) ::close(lock);
     return;
   }
   MoveIfAbsent(cfg + "/omaweb", cfg + "/qi");
@@ -290,6 +326,7 @@ void MigrateLegacyDirs() {
   MoveIfAbsent(cache + "/qi/omaweb", cache + "/qi/qi");
   MoveIfAbsent(data + "/qi/qi/QtWebEngine/omaweb", data + "/qi/qi/QtWebEngine/qi");
   MoveIfAbsent(cache + "/qi/qi/QtWebEngine/omaweb", cache + "/qi/qi/QtWebEngine/qi");
+  if (lock >= 0) ::close(lock);
 }
 
 static std::string ReadFile(const std::string& path) {

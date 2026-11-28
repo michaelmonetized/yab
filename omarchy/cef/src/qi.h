@@ -6,10 +6,10 @@
 // browser's own user data dir (~/.config/chromium, ~/.config/google-chrome,
 // ...) and the profile folder in it ("Default", "Profile 1", ...). Chromium
 // profiles keep their cookies and logins. Google Chrome and Brave open
-// logged out until their safe-storage keys are mapped. The window is
-// Chrome's own, so the tab strip is real. Tabs sit on a vertical sidebar,
-// collapsed until the pointer reaches the left edge, pinned with
-// Ctrl+Shift+L. Ctrl+T opens a tab. Ctrl+N opens a window.
+// logged out until their safe-storage keys are mapped. The window is Qi's:
+// a sidebar for tabs and favorites, and a floating address bar. Pages still
+// run in the Chrome runtime so extensions work. The stock tab strip stays
+// hidden. Ctrl+T opens a tab. Ctrl+N opens a window.
 #pragma once
 
 #include <cstdint>
@@ -21,6 +21,8 @@
 #include "include/cef_command_line.h"
 #include "include/cef_request_context.h"
 #include "include/views/cef_browser_view.h"
+
+class CefWindow;
 
 namespace qi {
 
@@ -114,9 +116,12 @@ std::string SnapshotDirFor(const ChromeRoot& root);
 bool SnapshotClobbersSource(const std::string& source, const std::string& dest);
 // True when dest is a finished snapshot of source.
 bool SnapshotCanReuse(const std::string& data_dir, const std::string& source);
-void WriteSnapshotMarker(const std::string& data_dir,
+// False when the marker could not be written. The copy is not usable then.
+bool WriteSnapshotMarker(const std::string& data_dir,
                          const std::string& source,
                          const std::string& label);
+// Makes a --user-data-dir absolute against the current directory.
+std::string AbsolutePath(const std::string& path);
 // Copies the user data dir (minus caches, locks and sockets) to dest.
 bool CopyUserDataDir(const std::string& src,
                      const std::string& dest,
@@ -142,6 +147,18 @@ const std::vector<std::pair<std::string, int>>& OpenStartupPrefValues();
 void OpenWindow(const std::string& profile_dir,
                 const std::string& url,
                 bool show_toolbar);
+void OpenFreshWindow(const std::string& profile_dir,
+                     const std::string& url,
+                     bool show_toolbar,
+                     bool priv);
+// A link from a page. False when this process has no Qi window yet.
+bool OpenAsTab(CefRefPtr<CefBrowser> opener, const std::string& url, bool background);
+void NotePage(CefRefPtr<CefBrowser> browser, const std::string& title, const std::string& url);
+void NoteLoad(CefRefPtr<CefBrowser> browser);
+bool RunAction(const std::string& name);
+void ReloadKeyMap();
+void RememberWindow(CefRefPtr<CefWindow> window);
+void ForgetWindow(CefRefPtr<CefWindow> window);
 void OpenProfilePicker();
 void CloseAllWindows();
 void TrackBrowser(CefRefPtr<CefBrowser> browser);
@@ -156,5 +173,7 @@ void SpawnFor(const std::string& root_id, const std::string& profile_dir);
 CefRefPtr<CefClient> SharedClient();
 void RememberPickerDocument(const std::string& url);
 bool IsPickerDocument(const std::string& url);
+void RememberKeysDocument(const std::string& url);
+bool IsKeysDocument(const std::string& url);
 
 }  // namespace qi

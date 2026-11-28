@@ -45,8 +45,13 @@ Launch: `qi-cef`. Install: `make install-cef` (runtime in
   Overwriting CEF's own `--disable-features` crashes Chrome in
   `ActorUiContentsContainerController`. Do not append that switch a
   second time.
-- Chrome toolbar with extension icons. Ctrl+Shift+B pins it, Ctrl+L
-  shows it until the next load, Ctrl+Shift+X opens `chrome://extensions`,
+- Qi draws the window. The stock tab strip stays off screen. Tabs are
+  `CefBrowserView`s in one window. The sidebar has three states (hidden,
+  icons, full). Ctrl+T opens a tab. Ctrl+N opens a window. Ctrl+L opens a
+  floating address bar over the page. Favorites live in
+  `~/.local/share/qi/favorites.json`. Shortcuts live in
+  `~/.config/qi/keys.toml`. The Chrome toolbar is hidden inside that bar
+  so LastPass still has an icon. Ctrl+Shift+U shows it.
   `--install-extension=<id>` opens the Web Store page.
 - LastPass: the toolbar icon and the real popup, already signed in from
   the Chromium profile. Verified on this machine. Do not sign in or
@@ -76,11 +81,8 @@ Launch: `qi-cef`. Install: `make install-cef` (runtime in
   Storage", which matches Chromium. Google Chrome and Brave use their own
   key ("Chrome Safe Storage", "Brave Safe Storage"). Those profiles will
   open logged out until that is mapped.
-- **No tab strip.** New windows tile under Hyprland. Some Chrome-created
-  windows may still show up as stock Chrome windows through the default
-  client. Not checked to exhaustion.
-- **Toolbar is Chrome's.** Extension icons live on it. There is no
-  Qi-drawn omnibox, no sidebar, no pinning UI of our own.
+- **Extension popups** (LastPass) are still Chrome popup windows. A normal
+  link that asks for a new tab becomes a Qi tab.
 - **Theme is read once**, at startup.
 - **Developer mode** is forced on, in the shared Preferences.
 - The Qt build's own profiles (`~/.local/share/qi`) are not the same
@@ -94,8 +96,8 @@ One person, rough. The Qt column is what `qi` does today.
 | Qt Qi today | Left on CEF | Est. |
 | --- | --- | --- |
 | Frameless themed window, live theme reload | Colours apply at startup. Watch `colors.toml` and re-apply. | 1–2 days |
-| Hidden URL bar, Ctrl+L | Chrome's toolbar does this. A Qi omnibox replaces it. | 1 week |
-| Sidebar: tabs, favorites, Spaces, folders, archive | A CEF Views panel or a WebUI side panel, and more than one browser in a window. | 3–4 weeks |
+| Hidden URL bar, Ctrl+L | Floating address bar over the page. History is read from a copy of the profile database. | done |
+| Sidebar: tabs, favorites, Spaces, folders, archive | Hidden, icons, and full. Favorites above the tabs. Spaces still switch profile. No folders or archive yet. | done for the three states |
 | Real Chrome profiles and the picker | Done as a spike. Create and remove profiles, avatars, a per-Space binding UI. | 1 week |
 | Chrome extensions, including LastPass and the Web Store | Done via Chrome style. Popups that anchor with the toolbar hidden, and a pinning UI. | 1–2 weeks |
 | Split view, Peek | Two `CefBrowserView`s in a box. Peek as an overlay window. | 1–2 weeks |
@@ -116,14 +118,21 @@ distro package. Do not let CEF get ahead of it.
 
 | Keys | Does |
 | --- | --- |
-| Ctrl+L | Address bar, until the next load |
-| Ctrl+Shift+B | Pin or hide the Chrome toolbar (extension icons live here) |
-| Ctrl+T, Ctrl+N | New window, same profile |
-| Ctrl+W | Close |
+| Ctrl+L, Alt+D, F6 | Floating address bar |
+| Ctrl+Shift+B, Ctrl+Shift+L | Cycle the sidebar: hidden, icons, full |
+| Ctrl+T | New tab in this window |
+| Ctrl+N | New window |
+| Ctrl+W | Close the tab |
+| Ctrl+Shift+T | Reopen the last closed tab |
+| Ctrl+D | Duplicate the tab |
+| Ctrl+Shift+U | Show the extension icons (LastPass) |
 | Ctrl+Shift+M | Profile picker |
 | Ctrl+Shift+X | `chrome://extensions` |
 | Ctrl+Alt+1 … 9 | That Space's profile |
 | Ctrl+Q | Quit |
+| Super chords | `omarchy/data/qi-keys-hypr.conf`. CEF cannot register Super. |
+
+`qi-cef --list-keys` prints the table. `qi-cef --set-key=<action> --chord=<Ctrl+T>` writes one override. The keyboard page is Ctrl+Shift+Comma.
 
 ## Rules that stay
 

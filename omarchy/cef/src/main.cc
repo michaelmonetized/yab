@@ -23,6 +23,7 @@
 #include "include/cef_app.h"
 #include "include/cef_parser.h"
 #include "include/cef_version.h"
+#include "keys.h"
 #include "qi.h"
 
 namespace qi {
@@ -53,8 +54,9 @@ void Tell(const std::string& msg) {
 static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
                       CefRefPtr<CefApp> app);
 
-static bool ClaimDenied(ProfileClaim claim, const std::string& what) {
-  if (claim == ProfileClaim::Preparing) {
+static bool ClaimDenied(ProfileClaim claim, const std::string& dir, const std::string& what) {
+  if (claim == ProfileClaim::Preparing ||
+      (claim == ProfileClaim::Busy && !LockHeldByQi(dir))) {
     Tell(what + " is still being prepared. Wait for that launch to finish.");
     return true;
   }
@@ -113,6 +115,25 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
   if (cl->HasSwitch("apply-startup-prefs")) {
     return ApplyStartupPrefFile(cl->GetSwitchValue("apply-startup-prefs")) ? 0 : 1;
   }
+  if (cl->HasSwitch("list-keys")) {
+    LoadKeys(KeysPath());
+    for (auto& action : Actions()) {
+      std::cout << action.name << "\t" << action.title;
+      for (auto& chord : action.chords) std::cout << "\t" << chord.text;
+      std::cout << "\n";
+    }
+    for (auto& conflict : ChordConflicts())
+      std::cerr << "qi-cef: " << conflict << "\n";
+    return ChordConflicts().empty() ? 0 : 2;
+  }
+  if (cl->HasSwitch("set-key")) {
+    std::string chord = cl->HasSwitch("chord") ? cl->GetSwitchValue("chord").ToString() : "";
+    if (!SetKeyOverride(KeysPath(), cl->GetSwitchValue("set-key"), chord)) {
+      Tell("usage: qi-cef --set-key=<action> --chord=<Ctrl+T>");
+      return 2;
+    }
+    return 0;
+  }
 
   // Which browser's user data dir.
   ChromeRoot root;
@@ -124,7 +145,7 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
       return 2;
     }
   } else if (cl->HasSwitch("user-data-dir")) {
-    root = {"custom", "Chrome", cl->GetSwitchValue("user-data-dir"), ""};
+    root = {"custom", "Chrome", AbsolutePath(cl->GetSwitchValue("user-data-dir")), ""};
   } else {
     root = KnownRoots().front();
   }
@@ -158,7 +179,7 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
         return 3;
       }
       ProfileClaim claim = ClaimProfile(root.dir);
-      if (ClaimDenied(claim, "Qi's profile")) return 4;
+      if (ClaimDenied(claim, root.dir, "Qi's profile")) return 4;
       if (claim == ProfileClaim::Owner) {
         MakeDirs(root.dir);
         owns_profile = true;
@@ -176,7 +197,7 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
         return 3;
       }
       ProfileClaim claim = ClaimProfile(data_dir);
-      if (ClaimDenied(claim, "the snapshot")) return 4;
+      if (ClaimDenied(claim, data_dir, "the snapshot")) return 4;
       if (claim == ProfileClaim::Owner) {
         if (SnapshotClobbersSource(root.dir, data_dir)) {
           ReleaseProfileClaim();
@@ -200,7 +221,12 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
             Tell("couldn't copy " + root.dir + ": " + err);
             return 4;
           }
-          WriteSnapshotMarker(data_dir, root.dir, root.label);
+          if (!WriteSnapshotMarker(data_dir, root.dir, root.label)) {
+            std::filesystem::remove_all(data_dir, ec);
+            ReleaseProfileClaim();
+            Tell("couldn't mark the snapshot of " + root.dir + ", so it wasn't opened.");
+            return 4;
+          }
         }
         owns_profile = true;
       }
@@ -217,7 +243,7 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
       return 3;
     }
     ProfileClaim claim = ClaimProfile(root.dir);
-    if (ClaimDenied(claim, root.dir)) return 4;
+    if (ClaimDenied(claim, root.dir, root.dir)) return 4;
     if (claim == ProfileClaim::Owner) {
       if (root.id == "custom" && !MakeDirs(root.dir)) {
         ReleaseProfileClaim();
@@ -286,11 +312,14 @@ static int RunBrowser(int argc, char* argv[], const CefMainArgs& main_args,
     return CefGetExitCode();
   }
   CefRunMessageLoop();
-  CefShutdown();
+  // Put the session files back while this process still holds the lock.
+  // CefShutdown drops SingletonLock, and a browser that starts in that gap
+  // would lose the files we were holding for it.
   if (owns_profile) {
     RestoreStartupPrefsOnDisk();
     ReleaseBrowserSessions(data_dir);
   }
+  CefShutdown();
 
   if (!snapshot && !last_version.empty() &&
       ReadAll(last_version_path) != last_version) {
