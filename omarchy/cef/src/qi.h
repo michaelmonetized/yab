@@ -154,6 +154,8 @@ void OpenFreshWindow(const std::string& profile_dir,
 // A link from a page. False when this process has no Qi window yet.
 bool OpenAsTab(CefRefPtr<CefBrowser> opener, const std::string& url, bool background);
 void NotePage(CefRefPtr<CefBrowser> browser, const std::string& title, const std::string& url);
+// Favicons land in Chrome's database a moment after the page reports them.
+void ScheduleRepaint();
 void NoteLoad(CefRefPtr<CefBrowser> browser);
 // A Chrome tab created inside a window we already own. Popups are ignored.
 void NoteOpened(CefRefPtr<CefBrowser> browser);

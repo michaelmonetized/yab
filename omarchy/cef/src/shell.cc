@@ -16,10 +16,12 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <vector>
 
 #include "include/cef_app.h"
+#include "include/cef_image.h"
 #include "include/cef_command_ids.h"
 #include "include/cef_parser.h"
 #include "include/cef_task.h"
@@ -43,6 +45,8 @@ constexpr int kAccelBase = 3000;
 constexpr int kHandleId = 1;
 constexpr int kPinId = 2;
 constexpr int kChipBack = 3;
+constexpr int kExtId = 4;
+constexpr int kNewId = 5;
 constexpr int kTabBase = 10000;
 constexpr int kFavBase = 20000;
 constexpr int kChipBase = 30000;
@@ -112,6 +116,12 @@ bool Contains(const std::string& hay, const std::string& needle) {
 }
 
 std::string Letter(const std::string& url, const std::string& title) {
+  if (url.rfind("data:", 0) == 0) {
+    std::string name = title.empty() ? "New Tab" : title;
+    unsigned char c = static_cast<unsigned char>(name[0]);
+    if (c < 128) return std::string(1, static_cast<char>(std::toupper(c)));
+    return name.substr(0, 1);
+  }
   std::string host = url;
   auto scheme = host.find("://");
   if (scheme != std::string::npos) host = host.substr(scheme + 3);
@@ -135,7 +145,8 @@ void StyleButton(CefRefPtr<CefLabelButton> button, cef_color_t fg) {
   button->SetTextColor(CEF_BUTTON_STATE_NORMAL, fg);
   button->SetTextColor(CEF_BUTTON_STATE_HOVERED, fg);
   button->SetTextColor(CEF_BUTTON_STATE_PRESSED, fg);
-  button->SetFontList("sans-serif, 13px");
+  button->SetBackgroundColor(CurrentTheme().selection);
+  button->SetFontList("sans-serif, 14px");
 }
 
 void Clipboard(const std::string& text) {
@@ -267,6 +278,7 @@ class Shell : public CefBaseRefCounted {
   void Adopt(CefRefPtr<CefBrowser> browser);
   void Select(size_t index);
   void ShowActive();
+  void Repaint();
   void CloseActive();
   void Restore();
   void Note(CefRefPtr<CefBrowser> browser, const std::string& title, const std::string& url);
@@ -303,6 +315,8 @@ class Shell : public CefBaseRefCounted {
   std::string ActiveTitle() const;
   const std::vector<Mark>* ChipFolder() const;
   CefRefPtr<CefLabelButton> MakeButton(int id, const std::string& text, const std::string& tip);
+  void PaintFace(CefRefPtr<CefLabelButton> button, const std::string& url, const std::string& title,
+                 bool icon_only);
   void PaintActive();
   IMPLEMENT_REFCOUNTING(Shell);
 };
@@ -339,11 +353,40 @@ class PollKeys : public CefTask {
   IMPLEMENT_REFCOUNTING(PollKeys);
 };
 
+class PressTask : public CefTask {
+ public:
+  PressTask(CefRefPtr<Shell> shell, int id) : shell_(shell), id_(id) {}
+  void Execute() override {
+    if (shell_ && shell_->alive) shell_->Press(id_);
+  }
+
+ private:
+  CefRefPtr<Shell> shell_;
+  int id_;
+  IMPLEMENT_REFCOUNTING(PressTask);
+};
+
 class ButtonHub : public CefButtonDelegate {
  public:
   explicit ButtonHub(CefRefPtr<Shell> shell) : shell_(shell) {}
+  // Press rebuilds the sidebar and deletes this button. InkDrop::Get(this)
+  // runs after OnButtonPressed returns, so the work has to be posted.
   void OnButtonPressed(CefRefPtr<CefButton> button) override {
-    if (shell_ && shell_->alive && button) shell_->Press(button->GetID());
+    if (shell_ && shell_->alive && button)
+      CefPostTask(TID_UI, new PressTask(shell_, button->GetID()));
+  }
+  void OnButtonStateChanged(CefRefPtr<CefButton> button) override {
+    if (!shell_ || !button || button->GetID() == 0) return;
+    auto label = button->AsLabelButton();
+    if (!label) return;
+    const Theme& theme = CurrentTheme();
+    int id = button->GetID();
+    bool on = id >= kTabBase && id < kFavBase &&
+              static_cast<size_t>(id - kTabBase) == shell_->active;
+    auto state = button->GetState();
+    bool hot = state == CEF_BUTTON_STATE_HOVERED || state == CEF_BUTTON_STATE_PRESSED;
+    label->SetBackgroundColor(on || hot ? theme.accent : theme.selection);
+    label->SetTextColor(state, theme.foreground);
   }
 
  private:
@@ -397,6 +440,8 @@ class ViewHub : public CefBrowserViewDelegate {
   IMPLEMENT_REFCOUNTING(ViewHub);
 };
 
+void WipePrivateDir(Shell* shell);
+
 class WindowHub : public CefWindowDelegate {
  public:
   explicit WindowHub(CefRefPtr<Shell> shell) : shell_(shell) {}
@@ -404,6 +449,9 @@ class WindowHub : public CefWindowDelegate {
     if (shell_) shell_->Build(window);
   }
   void OnWindowDestroyed(CefRefPtr<CefWindow> window) override {
+    // ForgetWindow can _exit. Wipe first, or a private window leaves its
+    // directory on disk.
+    if (shell_) WipePrivateDir(shell_.get());
     ForgetWindow(window);
     if (!shell_) return;
     auto shell = shell_;
@@ -415,10 +463,6 @@ class WindowHub : public CefWindowDelegate {
     all.erase(std::remove_if(all.begin(), all.end(),
                              [&](auto& have) { return have.get() == shell.get(); }),
               all.end());
-    if (shell->priv && !shell->private_dir.empty()) {
-      std::error_code ec;
-      fs::remove_all(shell->private_dir, ec);
-    }
     for (auto& tab : shell->tabs) {
       auto browser = tab.browser;
       if (!browser && tab.view) browser = tab.view->GetBrowser();
@@ -438,6 +482,7 @@ class WindowHub : public CefWindowDelegate {
     // window is released and the process exits. Any earlier window is hidden
     // so the others keep running.
     if (shell_ && OtherWindowsOpen() && window) {
+      WipePrivateDir(shell_.get());
       window->Hide();
       ForgetWindow(window);
       shell_->alive = false;
@@ -526,6 +571,115 @@ bool ViewHub::OnPopupBrowserViewCreated(CefRefPtr<CefBrowserView>,
   return true;
 }
 
+void WipePrivateDir(Shell* shell) {
+  if (!shell || shell->private_dir.empty()) return;
+  std::error_code ec;
+  fs::remove_all(shell->private_dir, ec);
+  shell->private_dir.clear();
+}
+
+// Older builds wrote private-window cookies under the profile root. An empty
+// CefRequestContext cache path is incognito, so those directories are only
+// leftovers.
+void SweepStalePrivateDirs(const std::string& root) {
+  if (root.empty()) return;
+  std::error_code ec;
+  const std::string prefix = ".qi-private-";
+  for (auto it = fs::directory_iterator(root, ec); !ec && it != fs::directory_iterator();
+       it.increment(ec)) {
+    std::string name = it->path().filename().string();
+    if (name.size() <= prefix.size() || name.compare(0, prefix.size(), prefix) != 0) continue;
+    bool digits = true;
+    for (size_t i = prefix.size(); i < name.size(); ++i)
+      digits = digits && std::isdigit(static_cast<unsigned char>(name[i]));
+    if (!digits) continue;
+    std::error_code rm;
+    fs::remove_all(it->path(), rm);
+  }
+}
+
+CefRefPtr<CefImage> ImageFromBlob(const void* data, int n) {
+  if (!data || n < 8) return nullptr;
+  const auto* bytes = static_cast<const unsigned char*>(data);
+  auto image = CefImage::CreateImage();
+  bool ok = false;
+  if (bytes[0] == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G')
+    ok = image->AddPNG(1.0f, data, static_cast<size_t>(n));
+  else if (bytes[0] == 0xFF && bytes[1] == 0xD8)
+    ok = image->AddJPEG(1.0f, data, static_cast<size_t>(n));
+  if (!ok || !image || image->IsEmpty()) return nullptr;
+  return image;
+}
+
+struct IconCache {
+  sqlite3* db = nullptr;
+  std::string profile;
+  fs::file_time_type when{};
+  bool ready = false;
+  std::map<std::string, CefRefPtr<CefImage>> hits;
+};
+
+IconCache& Icons() {
+  static IconCache cache;
+  return cache;
+}
+
+void RefreshIcons(const std::string& profile) {
+  IconCache& icons = Icons();
+  std::string src = ActiveDataDir() + "/" + profile + "/Favicons";
+  std::error_code ec;
+  if (!fs::exists(src, ec)) {
+    if (icons.db) sqlite3_close(icons.db);
+    icons = IconCache();
+    return;
+  }
+  auto when = fs::last_write_time(src, ec);
+  if (ec) return;
+  if (icons.ready && icons.profile == profile && icons.when == when) return;
+  if (icons.db) sqlite3_close(icons.db);
+  icons = IconCache();
+  icons.profile = profile;
+  icons.when = when;
+  std::string dest = StateDir() + "/favicon-read.db";
+  fs::copy_file(src, dest, fs::copy_options::overwrite_existing, ec);
+  if (ec) return;
+  fs::copy_file(src + "-wal", dest + "-wal", fs::copy_options::overwrite_existing, ec);
+  if (sqlite3_open_v2(dest.c_str(), &icons.db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (icons.db) sqlite3_close(icons.db);
+    icons.db = nullptr;
+    return;
+  }
+  icons.ready = true;
+}
+
+CefRefPtr<CefImage> FaviconFor(const std::string& profile, const std::string& url) {
+  if (profile.empty() || url.empty() || url.rfind("data:", 0) == 0 || url.rfind("chrome:", 0) == 0)
+    return nullptr;
+  RefreshIcons(profile);
+  IconCache& icons = Icons();
+  auto have = icons.hits.find(url);
+  if (have != icons.hits.end()) return have->second;
+  CefRefPtr<CefImage> image;
+  if (icons.db) {
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql =
+        "SELECT image_data FROM favicon_bitmaps WHERE icon_id = ("
+        "SELECT icon_id FROM icon_mapping WHERE page_url = ?1 LIMIT 1) "
+        "ORDER BY width DESC LIMIT 1";
+    if (sqlite3_prepare_v2(icons.db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+      sqlite3_bind_text(stmt, 1, url.c_str(), -1, SQLITE_TRANSIENT);
+      if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const void* blob = sqlite3_column_blob(stmt, 0);
+        int n = sqlite3_column_bytes(stmt, 0);
+        image = ImageFromBlob(blob, n);
+      }
+      sqlite3_finalize(stmt);
+    }
+  }
+  icons.hits[url] = image;
+  return image;
+}
+
 CefRefPtr<CefLabelButton> Shell::MakeButton(int id, const std::string& text, const std::string& tip) {
   auto button = CefLabelButton::CreateLabelButton(new ButtonHub(this), text);
   button->SetID(id);
@@ -533,6 +687,20 @@ CefRefPtr<CefLabelButton> Shell::MakeButton(int id, const std::string& text, con
   button->SetAccessibleName(tip.empty() ? text : tip);
   StyleButton(button, CurrentTheme().foreground);
   return button;
+}
+
+void Shell::PaintFace(CefRefPtr<CefLabelButton> button, const std::string& url,
+                      const std::string& title, bool icon_only) {
+  if (!button) return;
+  auto image = FaviconFor(profile, url);
+  std::string name = title.empty() ? url : title;
+  if (image) {
+    button->SetImage(CEF_BUTTON_STATE_NORMAL, image);
+    button->SetText(icon_only ? "" : Short(name, 28));
+    return;
+  }
+  std::string mark = Letter(url, title);
+  button->SetText(icon_only ? mark : mark + "   " + Short(name, 28));
 }
 
 void Shell::LoadSide() {
@@ -621,6 +789,13 @@ void Shell::SaveFavs() {
   WriteFile(DataDir() + "/favorites.json", CefWriteJSON(value, JSON_WRITER_DEFAULT));
 }
 
+CefBoxLayoutSettings RowGap(int gap) {
+  CefBoxLayoutSettings settings;
+  settings.horizontal = true;
+  settings.between_child_spacing = gap;
+  return settings;
+}
+
 void Shell::RebuildFavs() {
   if (!favs) return;
   favs->RemoveAllChildViews();
@@ -631,14 +806,13 @@ void Shell::RebuildFavs() {
   for (size_t i = 0; i < fav_items.size(); ++i) {
     if (!line || static_cast<int>(i) % across == 0) {
       line = CefPanel::CreatePanel(nullptr);
-      CefBoxLayoutSettings settings;
-      settings.horizontal = true;
-      layout = line->SetToBoxLayout(settings);
+      layout = line->SetToBoxLayout(RowGap(6));
       favs->AddChildView(line);
     }
-    auto button = MakeButton(kFavBase + static_cast<int>(i), Letter(fav_items[i].url, fav_items[i].title),
-                             fav_items[i].title.empty() ? fav_items[i].url : fav_items[i].title);
-    button->SetMinimumSize({40, 36});
+    std::string tip = fav_items[i].title.empty() ? fav_items[i].url : fav_items[i].title;
+    auto button = MakeButton(kFavBase + static_cast<int>(i), "", tip);
+    PaintFace(button, fav_items[i].url, tip, true);
+    button->SetMinimumSize({36, 36});
     line->AddChildView(button);
     if (layout) layout->SetFlexForView(button, 0);
   }
@@ -649,19 +823,25 @@ void Shell::RebuildTabs() {
   tabs_panel->RemoveAllChildViews();
   const bool icons = mode == Side::Icons && !peek;
   const Theme& theme = CurrentTheme();
+  auto add = MakeButton(kNewId, "+", "New tab");
+  add->SetMinimumSize({icons ? 44 : 36, 32});
+  tabs_panel->AddChildView(add);
   for (size_t i = 0; i < tabs.size(); ++i) {
-    std::string face = icons ? Letter(tabs[i].url, tabs[i].title)
-                             : Short(tabs[i].title.empty() ? tabs[i].url : tabs[i].title, 32);
-    if (tabs[i].pinned && !icons) face = "• " + face;
-    std::string tip = tabs[i].title.empty() ? tabs[i].url : tabs[i].title + "\n" + tabs[i].url;
-    auto button = MakeButton(kTabBase + static_cast<int>(i), face, tip);
-    button->SetMinimumSize({icons ? 44 : 248, 32});
-    if (i == active) button->SetBackgroundColor(theme.accent);
-    else button->SetBackgroundColor(theme.selection);
+    std::string name = tabs[i].title.empty() ? tabs[i].url : tabs[i].title;
+    if (tabs[i].url.rfind("data:", 0) == 0 && (name.empty() || name == tabs[i].url)) name = "New Tab";
+    std::string tip = name + (tabs[i].url.rfind("data:", 0) == 0 ? "" : "\n" + tabs[i].url);
+    auto button = MakeButton(kTabBase + static_cast<int>(i), "", tip);
+    PaintFace(button, tabs[i].url, name, icons);
+    if (tabs[i].pinned && !icons) {
+      std::string text = button->GetText().ToString();
+      button->SetText(std::string("•  ") + text);
+    }
+    button->SetMinimumSize({icons ? 44 : 248, 36});
+    button->SetBackgroundColor(i == active ? theme.accent : theme.selection);
     tabs_panel->AddChildView(button);
   }
-  auto pin = MakeButton(kPinId, pinned ? "Unpin" : "Pin", pinned ? "Unpin the sidebar" : "Pin the sidebar");
-  pin->SetMinimumSize({icons ? 44 : 248, 28});
+  auto pin = MakeButton(kPinId, pinned ? "●" : "○", pinned ? "Unpin the sidebar" : "Pin the sidebar");
+  pin->SetMinimumSize({icons ? 44 : 248, 32});
   tabs_panel->AddChildView(pin);
 }
 
@@ -722,6 +902,15 @@ void Shell::ShowActive() {
 
 void Shell::PaintActive() { RebuildTabs(); }
 
+void Shell::Repaint() {
+  RebuildFavs();
+  RebuildTabs();
+  if (palette_on) {
+    RebuildChips();
+    RebuildSuggest();
+  }
+}
+
 CefRefPtr<CefBrowser> Shell::ActiveBrowser() const {
   if (active >= tabs.size()) return nullptr;
   if (tabs[active].browser) return tabs[active].browser;
@@ -758,11 +947,26 @@ void Shell::Select(size_t index) {
   }
 }
 
+std::string NewTabUrl() {
+  const Theme& theme = CurrentTheme();
+  std::ostringstream html;
+  html << "<!doctype html><meta charset=utf-8><title>New Tab</title><style>"
+       << "html,body{height:100%;margin:0;background:" << theme.Css(theme.background)
+       << ";color:" << theme.Css(theme.foreground)
+       << ";font-family:sans-serif;display:flex;align-items:center;justify-content:center}"
+       << "div{text-align:center} b{display:block;font-size:56px;font-weight:500;letter-spacing:0}"
+       << "p{margin:16px 0 0;font-size:15px;opacity:.55}</style>"
+       << "<div><b>Qi</b><p>Ctrl+L to go somewhere</p></div>";
+  std::string body = html.str();
+  return "data:text/html;base64," + CefBase64Encode(body.data(), body.size()).ToString();
+}
+
 void Shell::AddTab(const std::string& url, bool background) {
   const Theme& theme = CurrentTheme();
   CefBrowserSettings settings;
   settings.background_color = theme.background;
-  std::string dest = url.empty() ? "chrome://newtab/" : url;
+  std::string dest = url;
+  if (dest.empty() || dest == "chrome://newtab/" || dest == "chrome://newtab") dest = NewTabUrl();
   const bool chrome = !page;
   CefRefPtr<CefBrowserViewDelegate> hub = chrome ? static_cast<CefBrowserViewDelegate*>(new ViewHub(this))
                                                  : static_cast<CefBrowserViewDelegate*>(new AlloyHub());
@@ -861,9 +1065,10 @@ void Shell::RebuildChips() {
   int n = 0;
   for (auto& mark : *folder) {
     if (n >= 16) break;
-    std::string face = mark.folder ? "+" : Letter(mark.url, mark.title);
-    auto button = MakeButton(kChipBase + n, face, mark.title.empty() ? mark.url : mark.title);
-    button->SetMinimumSize({32, 32});
+    std::string tip = mark.title.empty() ? mark.url : mark.title;
+    auto button = MakeButton(kChipBase + n, mark.folder ? "▸" : "", tip);
+    if (!mark.folder) PaintFace(button, mark.url, tip, true);
+    button->SetMinimumSize({36, 36});
     chips->AddChildView(button);
     chip_urls.push_back(mark.folder ? "" : mark.url);
     ++n;
@@ -922,8 +1127,11 @@ void Shell::RebuildSuggest() {
   if (!query.empty()) {
     for (auto& shell : Shells()) {
       for (auto& tab : shell->tabs) {
-        if (Contains(tab.title, query) || Contains(tab.url, query))
-          hits.push_back({tab.url, tab.title.empty() ? tab.url : tab.title + "  (open)"});
+        if (Contains(tab.title, query) || Contains(tab.url, query)) {
+          std::string title = tab.title.empty() ? tab.url : tab.title;
+          if (tab.url.rfind("data:", 0) == 0) title = tab.title.empty() ? "New Tab" : tab.title;
+          hits.push_back({tab.url, title + "  (open)"});
+        }
       }
     }
     CollectMarks(bookmarks, query, &hits);
@@ -935,11 +1143,15 @@ void Shell::RebuildSuggest() {
   }
   if (suggest_at >= static_cast<int>(hits.size())) suggest_at = 0;
   int shown = 0;
+  const Theme& theme = CurrentTheme();
   for (size_t i = 0; i < hits.size() && shown < 8; ++i, ++shown) {
     std::string face = hits[i].title.empty() ? hits[i].url : hits[i].title;
-    if (static_cast<int>(i) == suggest_at) face = "> " + face;
+    if (hits[i].url.rfind("data:", 0) == 0 && face == hits[i].url) face = "New Tab";
     auto button = MakeButton(kSuggestBase + shown, Short(face, 72), hits[i].url);
-    button->SetMinimumSize({640, 28});
+    PaintFace(button, hits[i].url, face, false);
+    button->SetText(Short(face, 72));
+    if (static_cast<int>(i) == suggest_at) button->SetBackgroundColor(theme.accent);
+    button->SetMinimumSize({640, 32});
     suggests->AddChildView(button);
     suggest_urls.push_back(hits[i].url);
   }
@@ -952,8 +1164,11 @@ void Shell::ShowPalette() {
   RebuildChips();
   suggest_at = 0;
   if (field) {
-    field->SetText(ActiveUrl());
-    field->SelectAll(false);
+    std::string shown = ActiveUrl();
+    if (shown.rfind("data:", 0) == 0) shown.clear();
+    field->SetText(shown);
+    field->ApplyTextColor(CurrentTheme().foreground, {});
+    if (!shown.empty()) field->SelectAll(false);
   }
   RebuildSuggest();
   ShowActive();
@@ -1084,6 +1299,15 @@ void Shell::Press(int id) {
   }
   if (id == kPinId) {
     TogglePin();
+    return;
+  }
+  if (id == kExtId) {
+    show_well = !show_well;
+    ShowActive();
+    return;
+  }
+  if (id == kNewId) {
+    AddTab("", false);
     return;
   }
   if (id == kChipBack) {
@@ -1504,8 +1728,8 @@ void Shell::Build(CefRefPtr<CefWindow> created) {
   edge_box.main_axis_alignment = CEF_AXIS_ALIGNMENT_CENTER;
   edge->SetToBoxLayout(edge_box);
   edge->SetBackgroundColor(theme.selection);
-  auto handle_button = MakeButton(kHandleId, ">", "Show the sidebar");
-  handle_button->SetMinimumSize({22, 96});
+  auto handle_button = MakeButton(kHandleId, "›", "Show the sidebar");
+  handle_button->SetMinimumSize({22, 72});
   handle_button->SetBackgroundColor(theme.accent);
   edge->AddChildView(handle_button);
   root->AddChildView(edge);
@@ -1527,31 +1751,47 @@ void Shell::Build(CefRefPtr<CefWindow> created) {
   window_layout->SetFlexForView(root, 1);
 
   sidebar = CefPanel::CreatePanel(nullptr);
-  sidebar->SetToBoxLayout(vertical);
-  sidebar->SetBackgroundColor(theme.background);
+  CefBoxLayoutSettings side_box;
+  side_box.horizontal = false;
+  side_box.between_child_spacing = 8;
+  side_box.inside_border_insets = {12, 8, 12, 8};
+  sidebar->SetToBoxLayout(side_box);
+  sidebar->SetBackgroundColor(theme.selection);
   favs = CefPanel::CreatePanel(nullptr);
-  favs->SetToBoxLayout(vertical);
+  favs->SetToBoxLayout(RowGap(0));
   tabs_panel = CefPanel::CreatePanel(nullptr);
-  auto tabs_layout = tabs_panel->SetToBoxLayout(vertical);
+  CefBoxLayoutSettings tab_box;
+  tab_box.horizontal = false;
+  tab_box.between_child_spacing = 4;
+  auto tabs_layout = tabs_panel->SetToBoxLayout(tab_box);
   sidebar->AddChildView(favs);
   sidebar->AddChildView(tabs_panel);
   tabs_layout->SetFlexForView(tabs_panel, 1);
 
   palette = CefPanel::CreatePanel(nullptr);
-  palette->SetToBoxLayout(vertical);
+  CefBoxLayoutSettings palette_box;
+  palette_box.horizontal = false;
+  palette_box.between_child_spacing = 10;
+  palette_box.inside_border_insets = {14, 14, 12, 14};
+  palette->SetToBoxLayout(palette_box);
   palette->SetBackgroundColor(theme.selection);
   auto row = CefPanel::CreatePanel(nullptr);
   auto row_layout = row->SetToBoxLayout(horizontal);
   field = CefTextfield::CreateTextfield(new FieldHub(this));
   field->SetPlaceholderText("Search or type a URL");
-  field->SetFontList("sans-serif, 16px");
+  field->SetBackgroundColor(theme.background);
+  field->SetFontList("sans-serif, 18px");
+  field->ApplyTextColor(theme.foreground, {});
   row->AddChildView(field);
   row_layout->SetFlexForView(field, 1);
   well = CefPanel::CreatePanel(nullptr);
-  well->SetToBoxLayout(horizontal);
+  well->SetToBoxLayout(RowGap(6));
+  auto ext = MakeButton(kExtId, "✱", "Extensions, including LastPass");
+  ext->SetMinimumSize({36, 36});
+  well->AddChildView(ext);
   row->AddChildView(well);
   chips = CefPanel::CreatePanel(nullptr);
-  chips->SetToBoxLayout(horizontal);
+  chips->SetToBoxLayout(RowGap(6));
   suggests = CefPanel::CreatePanel(nullptr);
   suggests->SetToBoxLayout(vertical);
   palette->AddChildView(row);
@@ -1597,20 +1837,33 @@ void BuildAccelTable() {
 }
 
 CefRefPtr<CefRequestContext> PrivateContext(std::string* dir_out) {
-  static int seq = 0;
-  std::string dir = ActiveDataDir() + "/.qi-private-" + std::to_string(++seq);
-  MakeDirs(dir);
-  if (dir_out) *dir_out = dir;
+  // An empty cache path is CEF's incognito mode: cookies and localStorage
+  // stay in memory. A directory under the profile would keep them on disk.
+  if (dir_out) dir_out->clear();
+  SweepStalePrivateDirs(ActiveDataDir());
   CefRequestContextSettings settings;
-  CefString(&settings.cache_path) = dir;
   settings.persist_session_cookies = 0;
   return CefRequestContext::CreateContext(settings, nullptr);
 }
 
+class RepaintTask : public CefTask {
+ public:
+  void Execute() override {
+    for (auto& shell : Shells())
+      if (shell && shell->alive) shell->Repaint();
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(RepaintTask);
+};
+
 }  // namespace
+
+void ScheduleRepaint() { CefPostDelayedTask(TID_UI, new RepaintTask(), 700); }
 
 void OpenFreshWindow(const std::string& profile_dir, const std::string& url, bool show_toolbar, bool priv) {
   CEF_REQUIRE_UI_THREAD();
+  SweepStalePrivateDirs(ActiveDataDir());
   auto shell = new Shell();
   shell->profile = profile_dir.empty() ? StartupProfile() : profile_dir;
   shell->priv = priv;

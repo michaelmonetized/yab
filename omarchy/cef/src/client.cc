@@ -139,6 +139,11 @@ class Client : public CefClient,
     NotePage(browser, "", url);
   }
 
+  void OnFaviconURLChange(CefRefPtr<CefBrowser> browser, const std::vector<CefString>&) override {
+    NotePage(browser, "", "");
+    ScheduleRepaint();
+  }
+
   void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool loading, bool, bool) override {
     if (!loading) return;
     OnBrowserLoading(browser);
