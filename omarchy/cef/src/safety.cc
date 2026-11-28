@@ -483,7 +483,10 @@ static bool MarkerMatches(const std::string& dest, const std::string& canon, boo
 std::string SnapshotDirFor(const ChromeRoot& root) {
   std::string id = root.id.empty() ? std::string("custom") : root.id;
   if (id == "custom") id += "-" + FnvHex(Canon(root.dir));
-  return HomeDir() + "/.cache/qi-cef/snapshot-" + id;
+  const char* cache = std::getenv("XDG_CACHE_HOME");
+  std::string base = (cache && cache[0]) ? std::string(cache) : HomeDir() + "/.cache";
+  while (!base.empty() && base.back() == '/') base.pop_back();
+  return base + "/qi-cef/snapshot-" + id;
 }
 
 bool SnapshotClobbersSource(const std::string& source, const std::string& dest) {

@@ -27,7 +27,7 @@ this file). Nothing has been committed or pushed. Do not commit WIP to `main`.
    `~/.config/qi`, migrating `~/.config/omaweb` (also migrate
    `~/.local/share/omaweb`, `~/.local/state/omaweb`, `~/.cache/omaweb`);
    README and docs; crate/package names where practical. **Keep the current
-   icon** (`omarchy/data/omaweb.svg`, a plain window glyph, no wordmark —
+   icon** (`omarchy/data/omaweb.svg`, a plain window glyph, no wordmark,
    just rename the file); Michael designs his own marks, don't make a logo.
    On m1pro16 replace the old Omaweb launcher and `~/.local/bin/omaweb` with
    the Qi ones; a temporary `omaweb -> qi` symlink is fine.
@@ -50,7 +50,7 @@ this file). Nothing has been committed or pushed. Do not commit WIP to `main`.
   (6.140.0-1 → 6.11.2-2). Refuse any downgrade. No careless `pacman -Syu`.
 - Don't restart `t3code.service`, don't touch/remount `~/cloud`, don't reboot.
 - Before any commit/push: update `.gitignore` (CEF binaries, build output,
-  profile dirs/snapshots/backups never committed — lines already added) and
+  profile dirs/snapshots/backups never committed, lines already added) and
   run `gitleaks` on the staged changes (`gitleaks git --staged` or
   `gitleaks protect --staged`; binary at `~/.local/bin/gitleaks`). Never push
   until clean. No force-push to main.
@@ -80,12 +80,12 @@ browsers in a Views-hosted CefWindow.** Reasons:
   at `~/.config/chromium` and `cache_path` at `~/.config/chromium/Default`
   opens his real profile.
 - Wayland: CEF Views windows run natively under Ozone Wayland
-  (`--ozone-platform=wayland`) — **verified on m1pro16** (Hyprland reports
+  (`--ozone-platform=wayland`). **Verified on m1pro16** (Hyprland reports
   `xwayland: false`). Only *embedding* a CEF browser into another toolkit's
   Wayland surface is unsupported (cef#2804, still open; a fork exists). That
   rules out putting CEF inside the Qt Quick window; Qi (CEF) is therefore a
   CEF-Views app (C++), with the Rust core to be linked/ported later.
-- Alternatives rejected: Qt WebEngine (partial extension API — the reason for
+- Alternatives rejected: Qt WebEngine (partial extension API, the reason for
   this work); WebKitGTK/WPE (no Chrome extensions); CEF OSR/Alloy (no
   extension UI); driving stock Chromium with `--app` (no custom chrome, no
   embedding).
@@ -141,7 +141,7 @@ omarchy/cef/src/omaweb.h     declarations
   app.cc      CefApp: ozone wayland, --profile-directory pin, forwards ~/.config/chromium-flags.conf
               (password-store=gnome-libsecret, oauth2 client flags, enable/disable-features,
               load-extension) merging comma lists ONCE; relaunch → new window
-  client.cc   titles ("<page> — Omaweb · <profile>"), auto-hide toolbar on load,
+  client.cc   titles ("<page>: Omaweb · <profile>"), auto-hide toolbar on load,
               https://omaweb.invalid/open?root=&dir= commands from the picker page
   window.cc   frameless CefWindow (IsFrameless), app_id omaweb-cef, Chrome toolbar
               (CEF_CTT_NORMAL) hidden by default; accelerators; profile picker (data: page
@@ -186,7 +186,7 @@ Ctrl+Alt+1…9 Space's profile, Ctrl+Q quit.
   Escape and touched nothing in it. So: real profile + real LastPass works.
 - chrome://version shows all forwarded flags applied (password store, oauth,
   features, load-extension) and User Data/Profile Path = the snapshot.
-- The live (non-snapshot) path — backup + open `~/.config/chromium` directly —
+- The live (non-snapshot) path, backup and open `~/.config/chromium` directly,
   has **not** been run yet. Chromium was not running at 09:30 EST; its
   `SingletonLock -> m1pro16-257430` is stale (pid gone).
 - The snapshot copy was deleted afterwards (it held his session data).
@@ -220,7 +220,7 @@ Ctrl+Alt+1…9 Space's profile, Ctrl+Q quit.
    exit so Chromium never treats the next start as a downgrade. CEF did not
    change it in the snapshot test.
 5. Cookie/password decryption: CEF is unbranded, so libsecret key is
-   "Chromium Safe Storage" — matches Chromium. Google Chrome / Brave profiles
+   "Chromium Safe Storage", which matches Chromium. Google Chrome / Brave profiles
    would need their own key name ("Chrome Safe Storage"); expect logged-out
    sites there. Gap for the roadmap.
 6. Process singleton: CEF takes `SingletonLock` on the root, so while Qi (CEF)
@@ -231,7 +231,7 @@ Ctrl+Alt+1…9 Space's profile, Ctrl+Q quit.
 7. Chrome-created windows (chrome.tabs.create from an extension, Ctrl+click)
    arrive via OnPopupBrowserViewCreated → Qi makes a frameless window; no
    tab strip yet (Hyprland groups/tiles windows). Some may still appear as
-   stock Chrome windows via GetDefaultClient — check.
+   stock Chrome windows via GetDefaultClient. Check.
 8. Env quirk on m1pro16: shells started from the Grok Bot AppImage inherit
    `LD_LIBRARY_PATH=/tmp/.mount_appima…/usr/lib` + `APPDIR/APPIMAGE/OWD`,
    which breaks `cmake` ("Could not find CMAKE_ROOT") and could break the app.
@@ -249,7 +249,7 @@ Ctrl+Alt+1…9 Space's profile, Ctrl+Q quit.
 1. Rename to Qi (Qt build + CEF build + data/docs), with XDG dir migration
    (`omaweb` → `qi` for config/data/state/cache; move, don't copy; only if the
    `qi` dir doesn't exist). Binary `qi` (Qt) and `qi-cef` (CEF) or a single
-   `qi` with the CEF engine behind a flag — keep the Qt build working.
+   `qi` with the CEF engine behind a flag. Keep the Qt build working.
    Wayland app_id `qi` / `qi-cef`. Update `omarchy/data/hyprland.conf`.
    Icon: rename `omaweb.svg` → `qi.svg`, same content. Crate name: `qi`
    (crates.io has an unrelated 2021 `qi` 0.0.1; fine for an unpublished
@@ -258,7 +258,7 @@ Ctrl+Alt+1…9 Space's profile, Ctrl+Q quit.
    `~/.local/lib/qi-cef/` (strip libcef.so), wrapper `~/.local/bin/qi-cef`
    that unsets the AppImage env, `qi-cef.desktop` "Qi (CEF)" with absolute
    Exec, icon. Check chrome-sandbox: it ran fine with the namespace sandbox
-   (no setuid needed) — confirm.
+   (no setuid needed). Confirm.
 3. Run the live path once on m1pro16 (Chromium closed): confirm the backup
    lands in chrome-backups, the window opens his real Default profile,
    LastPass icon + popup load. Don't sign in or change LastPass.
